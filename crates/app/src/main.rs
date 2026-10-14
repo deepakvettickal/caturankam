@@ -8,6 +8,7 @@ mod menu;
 mod net;
 mod online;
 mod settings;
+mod sound;
 mod style;
 
 use assets::{Assets, BOARDS, Fetch, PIECE_SETS, PieceSet};
@@ -85,6 +86,7 @@ pub enum Action {
     /// Light (`false`) or dark (`true`) chrome.
     Dark(bool),
     ToggleDark,
+    ToggleSound,
     /// Index into `SEEKS`.
     Seek(usize),
     CancelSeek,
@@ -178,6 +180,7 @@ struct App {
     viewing: Option<usize>,
     /// Challenges to us, oldest first.
     incoming: Vec<caturankam_lichess::Challenge>,
+    sound: sound::Player,
 }
 
 impl App {
@@ -231,6 +234,7 @@ impl App {
             title: String::new(),
             viewing: None,
             incoming: Vec::new(),
+            sound: sound::Player::default(),
         };
         if let Some(d) = &app.demo {
             if let Ok((game, _)) = Game::from_uci("startpos", &d.moves) {
@@ -277,6 +281,12 @@ impl App {
             egui::SystemTheme::Light
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(native));
+    }
+
+    fn play_sound(&mut self, s: sound::Sound) {
+        if !self.settings.muted {
+            self.sound.play(s);
+        }
     }
 
     fn notify(&mut self, ctx: &egui::Context, msg: impl Into<String>) {
@@ -454,6 +464,7 @@ impl App {
                             self.board.reset();
                             self.viewing = None;
                             self.board.flipped = g.me == Color::Black;
+                            self.play_sound(sound::Sound::Start);
                             self.promoting = None;
                             self.confirm_resign = false;
                             self.draw_offered = false;
@@ -468,7 +479,7 @@ impl App {
                     return;
                 };
                 // Finish with `g` (a mutable borrow of `self.play`) before touching `self` again.
-                let ply = g.game.ply();
+                let (ply, was_over) = (g.game.ply(), g.is_over());
                 let result = g.update(&st);
                 let (over, my_turn, moved) = (g.is_over(), g.my_turn(), g.game.ply() != ply);
                 if over {
@@ -479,9 +490,15 @@ impl App {
                     self.viewing = None; // a new move snaps back to the live position
                 }
                 match result {
-                    Ok(Some(ev)) => self.board.animate(&ev, now),
+                    Ok(Some(ev)) => {
+                        self.board.animate(&ev, now);
+                        self.play_sound(sound::Sound::for_move(&ev));
+                    }
                     Ok(None) => {}
                     Err(e) => self.notify(ctx, format!("Out of sync with Lichess: {e}")),
+                }
+                if over && !was_over {
+                    self.play_sound(sound::Sound::End);
                 }
                 if my_turn && let Some((from, to)) = self.board.premove.take() {
                     // Played at once, unanimated; dropped if it's no longer legal.
@@ -541,6 +558,10 @@ impl App {
             },
         };
         self.viewing = None;
+        self.play_sound(sound::Sound::for_move(&ev));
+        if matches!(self.play, Play::Local) && self.local.outcome() != Outcome::Unknown {
+            self.play_sound(sound::Sound::End);
+        }
         if animate {
             self.board.animate(&ev, now);
         }
@@ -625,6 +646,13 @@ impl App {
                 self.apply_mode(ctx);
             }
             Action::ToggleDark => self.act(ctx, Action::Dark(!self.settings.dark)),
+            Action::ToggleSound => {
+                self.settings.muted = !self.settings.muted;
+                self.settings.save();
+                if !self.settings.muted {
+                    self.play_sound(sound::Sound::Move); // a sample, so you hear it's on
+                }
+            }
             Action::ToggleSidebar => {
                 // Hide if it is showing now, show if it is hidden.
                 self.settings.sidebar_hidden = self.sidebar_visible();
@@ -779,6 +807,7 @@ impl App {
             (Key::F, Action::Flip),
             (Key::S, Action::ToggleSidebar),
             (Key::T, Action::ToggleDark),
+            (Key::M, Action::ToggleSound),
             (Key::R, Action::Randomize),
             (Key::L, Action::Login),
             (Key::N, Action::NewGame),
@@ -1550,6 +1579,7 @@ impl eframe::App for App {
                 board: self.settings.board.clone(),
                 sidebar_hidden: !self.sidebar_visible(),
                 dark: self.settings.dark,
+                muted: self.settings.muted,
             });
         }
         self.keys(&ctx);

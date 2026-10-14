@@ -23,6 +23,7 @@ pub struct MenuState {
     pub board: Option<String>,
     pub sidebar_hidden: bool,
     pub dark: bool,
+    pub muted: bool,
 }
 
 pub struct MenuBar {
@@ -32,6 +33,7 @@ pub struct MenuBar {
     sidebar: MenuItem,
     light: CheckMenuItem,
     dark: CheckMenuItem,
+    sound: CheckMenuItem,
     pieces: Vec<CheckMenuItem>,
     boards: Vec<CheckMenuItem>,
     rx: mpsc::Receiver<String>,
@@ -104,11 +106,13 @@ impl MenuBar {
         let sidebar = item("sidebar", "Hide Sidebar", Some(SIDEBAR_KEY));
         let light = CheckMenuItem::with_id("light", "Light", true, false, None);
         let dark = CheckMenuItem::with_id("dark", "Dark", true, false, key(DARK_KEY));
+        let sound = CheckMenuItem::with_id("sound", "Sound", true, true, None);
         let view = submenu(
             "View",
             &[
                 &sidebar,
                 &submenu("Appearance", &[&light, &dark]),
+                &sound,
                 &PredefinedMenuItem::separator(),
                 &submenu("Pieces", &pieces.iter().map(|i| i as _).collect::<Vec<_>>()),
                 &submenu("Board", &boards.iter().map(|i| i as _).collect::<Vec<_>>()),
@@ -151,6 +155,7 @@ impl MenuBar {
             sidebar,
             light,
             dark,
+            sound,
             pieces,
             boards,
             rx,
@@ -176,6 +181,7 @@ impl MenuBar {
         });
         self.light.set_checked(!state.dark);
         self.dark.set_checked(state.dark);
+        self.sound.set_checked(!state.muted);
         let piece = format!("piece:{}", state.piece_set.as_deref().unwrap_or(""));
         for i in &self.pieces {
             i.set_checked(i.id().0 == piece);
@@ -204,6 +210,7 @@ fn action(id: &str) -> Option<Action> {
         "sidebar" => Action::ToggleSidebar,
         "light" => Action::Dark(false),
         "dark" => Action::Dark(true),
+        "sound" => Action::ToggleSound,
         _ => {
             if let Some(set) = id.strip_prefix("piece:") {
                 Action::Pieces(name(set))

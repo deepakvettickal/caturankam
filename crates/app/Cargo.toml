@@ -28,3 +28,7 @@ memmap2.workspace = true  # map SF Pro instead of copying 8 MB into RAM
 # Already in the tree via winit/muda; "exception" lets mac_crash_guard.rs
 # catch one known AppKit exception instead of aborting on window close.
 objc2 = { version = "0.6", features = ["exception"] }
+# Already in the tree via winit/muda; NSSound plays the synthesised sounds
+# without keeping an audio stream open.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSSound"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }

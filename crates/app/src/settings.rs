@@ -15,6 +15,7 @@ pub struct Settings {
     pub board: Option<String>,
     pub sidebar_hidden: bool,
     pub dark: bool,
+    pub muted: bool,
     /// Never written to disk (demo mode for screenshots and benchmarks).
     #[serde(skip)]
     pub ephemeral: bool,
@@ -56,6 +57,7 @@ mod tests {
             board: None,
             sidebar_hidden: true,
             dark: true,
+            muted: false,
             ephemeral: false,
         };
         assert_eq!(

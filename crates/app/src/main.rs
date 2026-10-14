@@ -924,12 +924,23 @@ impl App {
                     .id_salt("sidebar")
                     .auto_shrink(false)
                     .show(ui, |ui| {
-                        self.account_row(ui);
-                        match &self.play {
-                            Play::Local => self.local_panel(ui),
-                            Play::Waiting { .. } => self.waiting_panel(ui),
-                            Play::Online(_) => self.online_panel(ui),
-                        }
+                        // A little room so glyph edges aren't clipped on the left and
+                        // the scrollbar doesn't cover anything on the right.
+                        egui::Frame::new()
+                            .inner_margin(Margin {
+                                left: 2,
+                                right: 10,
+                                top: 0,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                self.account_row(ui);
+                                match &self.play {
+                                    Play::Local => self.local_panel(ui),
+                                    Play::Waiting { .. } => self.waiting_panel(ui),
+                                    Play::Online(_) => self.online_panel(ui),
+                                }
+                            });
                     });
             });
     }
@@ -1059,10 +1070,12 @@ impl App {
 
         section(ui, &pal, "Challenge a friend", |ui| kbd(ui, &pal, "U"));
         ui.horizontal(|ui| {
+            // The field takes what the clock picker and Send button leave.
+            let width = (ui.available_width() - 160.0).max(80.0);
             let field = ui.add(
                 egui::TextEdit::singleline(&mut self.lobby.friend)
-                    .hint_text("Lichess username")
-                    .desired_width(130.0)
+                    .hint_text("Username")
+                    .desired_width(width)
                     .char_limit(30),
             );
             if std::mem::take(&mut self.lobby.focus_friend) {

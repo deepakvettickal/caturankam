@@ -30,7 +30,7 @@ const NOTICE_SECS: f64 = 6.0;
 /// Height of the name-and-clock strips above and below the board in a game.
 const STRIP: f32 = 44.0;
 /// Space between the board and its crop frame.
-const FRAME: f32 = 8.0;
+const FRAME: f32 = 3.0;
 
 /// Height of the macOS titlebar strip the content extends under.
 #[cfg(target_os = "macos")]
@@ -72,6 +72,9 @@ pub enum Action {
     Board(Option<String>),
     Randomize,
     ToggleSidebar,
+    /// Light (`false`) or dark (`true`) chrome.
+    Dark(bool),
+    ToggleDark,
     /// Index into `SEEKS`.
     Seek(usize),
     CancelSeek,
@@ -141,9 +144,8 @@ impl App {
         egui_extras::install_image_loaders(ctx);
         style::install_fonts(ctx);
         let theme = Theme::original();
-        let pal = Pal::new(&theme);
-        style::apply(ctx, &pal);
         let settings = Settings::load();
+        let pal = Pal::new(&theme, settings.dark);
         let mut app = Self {
             builtin: PieceSet::builtin(&theme),
             theme,
@@ -169,6 +171,7 @@ impl App {
             draw_offered: false,
         };
         app.apply_appearance(ctx);
+        app.apply_mode(ctx);
         if let Some(user) = app.settings.username.clone() {
             app.account = Account::Connecting(user);
             app.net(ctx).send(Cmd::Connect);
@@ -192,6 +195,18 @@ impl App {
         for Fetch { url, cache } in fetches {
             self.net(ctx).send(Cmd::Fetch { url, cache });
         }
+    }
+
+    /// Light or dark: egui's widgets, our palette, and the native window chrome.
+    fn apply_mode(&mut self, ctx: &egui::Context) {
+        self.pal = Pal::new(&self.theme, self.settings.dark);
+        style::apply(ctx, &self.pal);
+        let native = if self.pal.dark {
+            egui::SystemTheme::Dark
+        } else {
+            egui::SystemTheme::Light
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(native));
     }
 
     fn notify(&mut self, ctx: &egui::Context, msg: impl Into<String>) {
@@ -444,6 +459,12 @@ impl App {
                 self.settings.save();
                 self.apply_appearance(ctx);
             }
+            Action::Dark(dark) => {
+                self.settings.dark = dark;
+                self.settings.save();
+                self.apply_mode(ctx);
+            }
+            Action::ToggleDark => self.act(ctx, Action::Dark(!self.settings.dark)),
             Action::ToggleSidebar => {
                 // Hide if it is showing now, show if it is hidden.
                 self.settings.sidebar_hidden = self.sidebar_visible();
@@ -546,6 +567,7 @@ impl App {
         let mut bind: Vec<(Key, Action)> = vec![
             (Key::F, Action::Flip),
             (Key::S, Action::ToggleSidebar),
+            (Key::T, Action::ToggleDark),
             (Key::R, Action::Randomize),
             (Key::L, Action::Login),
             (Key::N, Action::NewGame),
@@ -682,6 +704,9 @@ impl App {
                         }
                         if button(ui, &pal, "Sidebar", Some("S"), Kind::Secondary).clicked() {
                             self.act(&ctx, Action::ToggleSidebar);
+                        }
+                        if button(ui, &pal, "Light/Dark", Some("T"), Kind::Secondary).clicked() {
+                            self.act(&ctx, Action::ToggleDark);
                         }
                         if button(ui, &pal, "Randomize", Some("R"), Kind::Secondary).clicked() {
                             self.act(&ctx, Action::Randomize);
@@ -973,7 +998,8 @@ impl App {
         style::hatch(ui.painter(), field, pal.line);
 
         let online = self.online().is_some();
-        let pad = FRAME + 10.0;
+        // Just enough room for the frame and its crop-mark overshoot.
+        let pad = FRAME + style::CROP + 2.0;
         let mut area = field.shrink(pad);
         if online {
             area = area.shrink2(Vec2::new(0.0, STRIP));
@@ -1224,6 +1250,7 @@ impl eframe::App for App {
                 piece_set: self.settings.piece_set.clone(),
                 board: self.settings.board.clone(),
                 sidebar_hidden: !self.sidebar_visible(),
+                dark: self.settings.dark,
             });
         }
         self.keys(&ctx);
@@ -1281,10 +1308,10 @@ fn clock(ui: &mut egui::Ui, pal: &Pal, g: &OnlineGame, c: Color, now: Instant) {
     let (fill, ink, border) = match (running, left.as_secs() < 10) {
         (true, true) => (
             Color32::from_rgb(190, 45, 35),
-            Color32::WHITE,
+            style::ink_on(Color32::from_rgb(190, 45, 35)),
             Color32::from_rgb(190, 45, 35),
         ),
-        (true, false) => (pal.primary, Color32::WHITE, pal.primary),
+        (true, false) => (pal.primary, pal.on_primary, pal.primary),
         _ => (pal.surface, pal.text, pal.line),
     };
     egui::Frame::new()

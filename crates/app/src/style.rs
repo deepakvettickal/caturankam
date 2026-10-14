@@ -18,13 +18,20 @@ pub struct Pal {
     pub text: Color32,
     pub muted: Color32,
     pub primary: Color32,
+    /// Readable ink on `primary`.
+    pub on_primary: Color32,
     pub accent: Color32,
+    pub dark: bool,
 }
 
 impl Pal {
-    pub fn new(theme: &Theme) -> Self {
-        let u = &theme.ui;
+    /// Dark mode uses the theme's `[ui_dark]`, if it has one.
+    pub fn new(theme: &Theme, dark: bool) -> Self {
+        let dark_ui = theme.ui_dark.as_ref().filter(|_| dark);
+        let u = dark_ui.unwrap_or(&theme.ui);
         Self {
+            dark: dark_ui.is_some(),
+            on_primary: ink_on(rgb(u.primary)),
             bg: rgb(u.background),
             surface: rgb(u.surface),
             line: rgb(u.line),
@@ -105,7 +112,11 @@ fn map_font(path: &str) -> Option<&'static [u8]> {
 
 /// egui's own widgets (checkbox, slider, menus) in the same palette.
 pub fn apply(ctx: &egui::Context, pal: &Pal) {
-    let mut v = egui::Visuals::light();
+    let mut v = if pal.dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
     v.panel_fill = pal.bg;
     v.window_fill = pal.surface;
     v.extreme_bg_color = pal.surface;
@@ -113,7 +124,8 @@ pub fn apply(ctx: &egui::Context, pal: &Pal) {
     v.override_text_color = Some(pal.text);
     v.weak_text_color = Some(pal.muted);
     v.selection.bg_fill = pal.accent;
-    v.selection.stroke = Stroke::new(1.0, pal.text);
+    // Text on the highlighter stays dark in both modes.
+    v.selection.stroke = Stroke::new(1.0, ink_on(pal.accent));
     v.window_stroke = Stroke::new(1.0, pal.line);
     v.window_corner_radius = CornerRadius::same(RADIUS);
     v.menu_corner_radius = CornerRadius::same(RADIUS);
@@ -129,7 +141,7 @@ pub fn apply(ctx: &egui::Context, pal: &Pal) {
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, pal.text);
     for (w, fill) in [
         (&mut v.widgets.inactive, pal.surface),
-        (&mut v.widgets.hovered, shade(pal.bg)),
+        (&mut v.widgets.hovered, hover(pal, pal.bg)),
         (&mut v.widgets.active, pal.accent),
     ] {
         w.weak_bg_fill = fill;
@@ -156,14 +168,21 @@ pub fn apply(ctx: &egui::Context, pal: &Pal) {
     });
 }
 
-/// A hovered or pressed version of a light colour.
-fn shade(c: Color32) -> Color32 {
-    let [r, g, b, _] = c.to_array();
-    Color32::from_rgb(
-        r.saturating_sub(10),
-        g.saturating_sub(10),
-        b.saturating_sub(8),
-    )
+/// A hovered version of a fill: nudged a little towards the text colour,
+/// so it darkens in light mode and lightens in dark mode.
+fn hover(pal: &Pal, c: Color32) -> Color32 {
+    c.lerp_to_gamma(pal.text, 0.06)
+}
+
+/// Black or white, whichever reads better on `fill`.
+pub fn ink_on(fill: Color32) -> Color32 {
+    let [r, g, b, _] = fill.to_array();
+    let luma = 0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b);
+    if luma > 150.0 {
+        Color32::from_rgb(29, 29, 27)
+    } else {
+        Color32::WHITE
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -188,11 +207,11 @@ pub fn button(ui: &mut Ui, pal: &Pal, text: &str, key: Option<&str>, kind: Kind)
     let enabled = ui.is_enabled();
     let p = ui.painter();
     let (fill, ink, border) = match kind {
-        Kind::Primary => (pal.primary, Color32::WHITE, pal.primary),
+        Kind::Primary => (pal.primary, pal.on_primary, pal.primary),
         Kind::Secondary => (pal.surface, pal.text, pal.line),
     };
     let fill = if resp.hovered() && enabled {
-        lift(fill, kind)
+        lift(pal, fill, kind)
     } else {
         fill
     };
@@ -302,11 +321,11 @@ fn chip_width(g: &egui::Galley) -> f32 {
     (g.size().x + 8.0).max(16.0)
 }
 
-fn paint_chip(p: &Painter, r: Rect, g: std::sync::Arc<egui::Galley>, on_dark: bool, pal: &Pal) {
-    let (border, ink, fill) = if on_dark {
+fn paint_chip(p: &Painter, r: Rect, g: std::sync::Arc<egui::Galley>, on_primary: bool, pal: &Pal) {
+    let (border, ink, fill) = if on_primary {
         (
-            Color32::from_white_alpha(70),
-            Color32::from_white_alpha(210),
+            pal.on_primary.gamma_multiply(0.35),
+            pal.on_primary.gamma_multiply(0.85),
             Color32::TRANSPARENT,
         )
     } else {
@@ -317,10 +336,10 @@ fn paint_chip(p: &Painter, r: Rect, g: std::sync::Arc<egui::Galley>, on_dark: bo
     p.galley(pos, g, ink);
 }
 
-fn lift(c: Color32, kind: Kind) -> Color32 {
+fn lift(pal: &Pal, c: Color32, kind: Kind) -> Color32 {
     match kind {
-        Kind::Primary => c.gamma_multiply(0.85).to_opaque(),
-        Kind::Secondary => shade(c),
+        Kind::Primary => c.lerp_to_gamma(pal.bg, 0.15),
+        Kind::Secondary => hover(pal, c),
     }
 }
 
@@ -339,11 +358,14 @@ pub fn hatch(p: &Painter, rect: Rect, color: Color32) {
     }
 }
 
+/// How far crop marks overshoot the frame's corners.
+pub const CROP: f32 = 5.0;
+
 /// A hairline frame whose edges overshoot the corners slightly, like crop
 /// marks. `rect` is the frame itself.
 pub fn crop_frame(p: &Painter, rect: Rect, color: Color32) {
     let s = Stroke::new(1.0, color);
-    let o = 7.0;
+    let o = CROP;
     let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
     p.line_segment([pos2(l - o, t), pos2(r + o, t)], s);
     p.line_segment([pos2(l - o, b), pos2(r + o, b)], s);

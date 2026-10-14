@@ -22,3 +22,12 @@ text = "#1D1D1B"
 muted = "#77776F"
 primary = "#1D1D1B"     # the one dark button
 accent = "#EDF07B"      # highlighter
+
+[ui_dark]
+background = "#121211"
+surface = "#1B1B19"
+line = "#2C2C29"
+text = "#ECECE8"
+muted = "#8E8E87"
+primary = "#ECECE8"     # inverted: a light button on dark paper
+accent = "#E3E866"

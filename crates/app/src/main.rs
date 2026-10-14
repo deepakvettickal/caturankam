@@ -23,6 +23,8 @@ const SEEKS: &[(u32, u32)] = &[(10, 0), (10, 5), (15, 10), (30, 0), (30, 20)];
 /// Against the computer, Blitz is allowed too.
 const AI_CLOCKS: &[(u32, u32)] = &[(3, 2), (5, 0), (5, 3), (10, 0), (10, 5), (15, 10)];
 const NOTICE_SECS: f64 = 6.0;
+/// Height of the name-and-clock strips above and below the board in a game.
+const STRIP: f32 = 44.0;
 
 /// Height of the macOS titlebar strip the content extends under.
 #[cfg(target_os = "macos")]
@@ -63,6 +65,7 @@ pub enum Action {
     /// `None` is the theme's own colours.
     Board(Option<String>),
     Randomize,
+    ToggleSidebar,
 }
 
 enum Account {
@@ -177,6 +180,12 @@ impl App {
             Play::Online(g) => &g.game,
             _ => &self.local,
         }
+    }
+
+    /// The user's choice, except that a finished game always shows the
+    /// sidebar: that's where the result and "Back to lobby" are.
+    fn sidebar_visible(&self) -> bool {
+        !self.settings.sidebar_hidden || matches!(&self.play, Play::Online(g) if g.is_over())
     }
 
     fn username(&self) -> Option<&str> {
@@ -406,6 +415,11 @@ impl App {
                 self.settings.save();
                 self.apply_appearance(ctx);
             }
+            Action::ToggleSidebar => {
+                // Hide if it is showing now, show if it is hidden.
+                self.settings.sidebar_hidden = self.sidebar_visible();
+                self.settings.save();
+            }
             Action::Randomize => {
                 // Index 0 of each catalog is the built-in one, which is `None`.
                 let pick = |names: Vec<&str>, current: Option<&str>| {
@@ -452,6 +466,39 @@ impl App {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Maximized(!zoomed));
                 }
+                // Sidebar toggle at the right, like Finder or Mail. Registered after
+                // the drag strip, so it gets the click.
+                let icon = egui::Rect::from_center_size(
+                    egui::pos2(rect.right() - 24.0, rect.center().y),
+                    Vec2::new(20.0, 15.0),
+                );
+                let toggle = ui
+                    .interact(
+                        icon.expand(4.0),
+                        egui::Id::new("sidebar"),
+                        egui::Sense::click(),
+                    )
+                    .on_hover_text("Show or hide the sidebar (⌃⌘S)");
+                let ink = rgb(self.theme.ui.text).gamma_multiply(if toggle.hovered() {
+                    1.0
+                } else {
+                    0.6
+                });
+                let p = ui.painter();
+                p.rect_stroke(icon, 3.0, Stroke::new(1.3, ink), egui::StrokeKind::Inside);
+                let split = icon.right() - 7.0;
+                p.line_segment(
+                    [
+                        egui::pos2(split, icon.top()),
+                        egui::pos2(split, icon.bottom()),
+                    ],
+                    Stroke::new(1.3, ink),
+                );
+                if toggle.clicked() {
+                    let ctx = ui.ctx().clone();
+                    self.act(&ctx, Action::ToggleSidebar);
+                }
+
                 let title = format!("Caturankam · {}", self.theme.name);
                 ui.painter().text(
                     rect.center(),
@@ -491,6 +538,9 @@ impl App {
                         {
                             self.act(&ctx, Action::Logout);
                         }
+                        if ui.button("Sidebar").clicked() {
+                            self.act(&ctx, Action::ToggleSidebar);
+                        }
                         if ui.button("Board & pieces").clicked() {
                             self.show_appearance = !self.show_appearance;
                         }
@@ -528,7 +578,9 @@ impl App {
                 }
             }
             Account::LoggedIn(user) => {
-                ui.label(RichText::new("●").color(accent));
+                // A painted dot: the UI font has no "●" glyph.
+                let (dot, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
+                ui.painter().circle_filled(dot.center(), 4.0, accent);
                 ui.label(RichText::new(user).strong());
                 ui.label(RichText::new("on Lichess").weak());
             }
@@ -554,14 +606,29 @@ impl App {
                     Play::Seeking { .. } => self.seeking_panel(ui),
                     Play::Online(_) => self.online_panel(ui),
                 }
-                if let Some((msg, until)) = &self.notice {
-                    if ui.input(|i| i.time) < *until {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(msg).color(Color32::from_rgb(230, 120, 100)));
-                    } else {
-                        self.notice = None;
-                    }
-                }
+            });
+    }
+
+    /// Notices float at the bottom of the window, so they show with the
+    /// sidebar hidden too.
+    fn toast(&mut self, ctx: &egui::Context) {
+        let Some((msg, until)) = &self.notice else {
+            return;
+        };
+        if ctx.input(|i| i.time) >= *until {
+            self.notice = None;
+            return;
+        }
+        egui::Area::new("toast".into())
+            .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -16.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(rgb(self.theme.ui.panel))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(170, 70, 60)))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::symmetric(14, 8))
+                    .show(ui, |ui| ui.label(msg.as_str()));
             });
     }
 
@@ -689,24 +756,15 @@ impl App {
         }
     }
 
+    /// Moves and game actions. Names and clocks are in the strips by the board.
     fn online_panel(&mut self, ui: &mut egui::Ui) {
         let Play::Online(g) = &self.play else { return };
-        let now = Instant::now();
-        let accent = rgb(self.theme.ui.accent);
-        let them = if g.me == Color::White {
-            Color::Black
-        } else {
-            Color::White
-        };
-
         let kind = if g.rated { "Rated" } else { "Casual" };
         ui.label(
             RichText::new(format!("{} · {kind}", g.speed).to_uppercase())
                 .size(11.0)
                 .weak(),
         );
-        ui.add_space(4.0);
-        player_card(ui, g, them, now, accent);
         if let Some(secs) = g.opponent_gone {
             ui.label(
                 RichText::new(format!(
@@ -717,20 +775,12 @@ impl App {
             );
         }
         ui.add_space(6.0);
-        let moves_height = (ui.available_height() - 150.0).max(80.0);
         egui::ScrollArea::vertical()
             .id_salt("online-moves")
-            .max_height(moves_height)
+            .max_height((ui.available_height() - 90.0).max(80.0))
             .stick_to_bottom(true)
             .show(ui, |ui| move_list(ui, &g.game));
-        ui.add_space(6.0);
-        player_card(ui, g, g.me, now, accent);
         ui.add_space(8.0);
-
-        if g.ticking() {
-            let left = g.clock(g.game.turn(), now).unwrap_or_default();
-            ui.ctx().request_repaint_after(next_tick(left));
-        }
 
         let id = g.id.clone();
         if g.is_over() {
@@ -741,25 +791,8 @@ impl App {
             }
             return;
         }
-        let (can_abort, offers_draw) = (g.can_abort(), g.opponent_offers_draw);
+        let can_abort = g.can_abort();
         let Some(net) = &self.net else { return };
-        if offers_draw {
-            ui.label("Your opponent offers a draw.");
-            ui.horizontal(|ui| {
-                if ui.button("Accept").clicked() {
-                    net.send(Cmd::Draw {
-                        game: id.clone(),
-                        accept: true,
-                    });
-                }
-                if ui.button("Decline").clicked() {
-                    net.send(Cmd::Draw {
-                        game: id.clone(),
-                        accept: false,
-                    });
-                }
-            });
-        }
         ui.horizontal(|ui| {
             if can_abort {
                 if ui.button("Abort").clicked() {
@@ -794,6 +827,60 @@ impl App {
                 self.draw_offered = true;
             }
         });
+    }
+
+    /// Name and clock strips above and below the board. The opponent's strip
+    /// also carries a draw offer, so it can't be missed with the sidebar hidden.
+    fn player_strips(&self, ui: &mut egui::Ui, board: egui::Rect) {
+        let Play::Online(g) = &self.play else { return };
+        let now = Instant::now();
+        let accent = rgb(self.theme.ui.accent);
+        // Follow the board: whoever's at the top of the board is at the top.
+        let (top, bottom) = if self.board.flipped {
+            (Color::White, Color::Black)
+        } else {
+            (Color::Black, Color::White)
+        };
+        let gap = 6.0;
+        let top_rect = egui::Rect::from_min_max(
+            egui::pos2(board.left(), board.top() - STRIP + gap),
+            egui::pos2(board.right(), board.top() - gap),
+        );
+        let bottom_rect = egui::Rect::from_min_max(
+            egui::pos2(board.left(), board.bottom() + gap),
+            egui::pos2(board.right(), board.bottom() + STRIP - gap),
+        );
+        let mut answer = None;
+        for (c, rect) in [(top, top_rect), (bottom, bottom_rect)] {
+            let builder = egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center));
+            ui.scope_builder(builder, |ui| {
+                ui.label(RichText::new(player_label(g.player(c))).size(15.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    clock(ui, g, c, now, accent);
+                    if c != g.me && g.opponent_offers_draw && !g.is_over() {
+                        ui.add_space(8.0);
+                        if ui.small_button("Decline").clicked() {
+                            answer = Some(false);
+                        }
+                        if ui.small_button("Accept draw").clicked() {
+                            answer = Some(true);
+                        }
+                    }
+                });
+            });
+        }
+        if let (Some(accept), Some(net)) = (answer, &self.net) {
+            net.send(Cmd::Draw {
+                game: g.id.clone(),
+                accept,
+            });
+        }
+        if g.ticking() {
+            let left = g.clock(g.game.turn(), now).unwrap_or_default();
+            ui.ctx().request_repaint_after(next_tick(left));
+        }
     }
 
     fn appearance_window(&mut self, ctx: &egui::Context) {
@@ -909,11 +996,14 @@ impl eframe::App for App {
                 busy: matches!(self.account, Account::LoggingIn | Account::Connecting(_)),
                 piece_set: self.settings.piece_set.clone(),
                 board: self.settings.board.clone(),
+                sidebar_hidden: !self.sidebar_visible(),
             });
         }
 
         self.top_bar(ui);
-        self.side_panel(ui);
+        if self.sidebar_visible() {
+            self.side_panel(ui);
+        }
 
         let frame = egui::Frame::new()
             .fill(rgb(self.theme.ui.background))
@@ -940,14 +1030,25 @@ impl eframe::App for App {
                 Play::Online(g) => &g.game,
                 _ => &self.local,
             };
-            if let Some(i) = self.board.show(ui, game, &look, movable) {
-                if game.is_promotion(i.from, i.to) {
+            // In a game, leave room above and below the board for the player strips.
+            let mut area = ui.available_rect_before_wrap();
+            if matches!(self.play, Play::Online(_)) {
+                area = area.shrink2(Vec2::new(0.0, STRIP));
+            }
+            let builder = egui::UiBuilder::new().max_rect(area);
+            let intent = ui
+                .scope_builder(builder, |ui| self.board.show(ui, game, &look, movable))
+                .inner;
+            self.player_strips(ui, board::board_rect(area));
+            if let Some(i) = intent {
+                if self.game().is_promotion(i.from, i.to) {
                     self.promoting = Some((i.from, i.to));
                 } else {
                     self.play_move(i.from, i.to, None, !i.dragged, now);
                 }
             }
         });
+        self.toast(&ctx);
 
         self.promotion_picker(&ctx, now);
         self.appearance_window(&ctx);
@@ -976,32 +1077,27 @@ fn local_status(game: &Game) -> (String, &'static str) {
     }
 }
 
-fn player_card(ui: &mut egui::Ui, g: &OnlineGame, c: Color, now: Instant, accent: Color32) {
+/// A clock face; highlighted while running, red in the last ten seconds.
+fn clock(ui: &mut egui::Ui, g: &OnlineGame, c: Color, now: Instant, accent: Color32) {
+    let Some(left) = g.clock(c, now) else { return };
     let running = g.ticking() && g.game.turn() == c;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(player_label(g.player(c))).size(15.0));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let Some(left) = g.clock(c, now) else { return };
-            let low = left.as_secs() < 10;
-            let fill = match (running, low) {
-                (true, true) => Color32::from_rgb(170, 40, 30),
-                (true, false) => accent,
-                _ => Color32::from_white_alpha(14),
-            };
-            egui::Frame::new()
-                .fill(fill)
-                .corner_radius(CornerRadius::same(6))
-                .inner_margin(Margin::symmetric(10, 4))
-                .show(ui, |ui| {
-                    let text = RichText::new(format_clock(left)).font(FontId::monospace(24.0));
-                    ui.label(if running {
-                        text.color(Color32::WHITE)
-                    } else {
-                        text
-                    });
-                });
+    let fill = match (running, left.as_secs() < 10) {
+        (true, true) => Color32::from_rgb(170, 40, 30),
+        (true, false) => accent,
+        _ => Color32::from_white_alpha(14),
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::symmetric(10, 2))
+        .show(ui, |ui| {
+            let text = RichText::new(format_clock(left)).font(FontId::monospace(22.0));
+            ui.label(if running {
+                text.color(Color32::WHITE)
+            } else {
+                text
+            });
         });
-    });
 }
 
 fn move_list(ui: &mut egui::Ui, game: &Game) {

@@ -8,6 +8,9 @@ use muda::accelerator::Accelerator;
 use muda::{AboutMetadata, CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use std::sync::mpsc;
 
+/// ⌃⌘S, the standard macOS sidebar toggle.
+const SIDEBAR_KEY: &str = "Control+Super+S";
+
 /// What the menu currently shows; re-synced only when it changes.
 #[derive(Clone, PartialEq, Default)]
 pub struct MenuState {
@@ -15,12 +18,14 @@ pub struct MenuState {
     pub busy: bool,
     pub piece_set: Option<String>,
     pub board: Option<String>,
+    pub sidebar_hidden: bool,
 }
 
 pub struct MenuBar {
     _menu: Menu, // the menu lives as long as this handle
     login: MenuItem,
     logout: MenuItem,
+    sidebar: MenuItem,
     pieces: Vec<CheckMenuItem>,
     boards: Vec<CheckMenuItem>,
     rx: mpsc::Receiver<String>,
@@ -90,9 +95,12 @@ impl MenuBar {
                         .map(|(n, _)| check(format!("board:{n}"), n)),
                 )
                 .collect();
+        let sidebar = item("sidebar", "Hide Sidebar", Some(SIDEBAR_KEY));
         let view = submenu(
             "View",
             &[
+                &sidebar,
+                &PredefinedMenuItem::separator(),
                 &submenu("Pieces", &pieces.iter().map(|i| i as _).collect::<Vec<_>>()),
                 &submenu("Board", &boards.iter().map(|i| i as _).collect::<Vec<_>>()),
                 &item("random", "Randomize Pieces and Board", Some("CmdOrCtrl+R")),
@@ -131,6 +139,7 @@ impl MenuBar {
             _menu: menu,
             login,
             logout,
+            sidebar,
             pieces,
             boards,
             rx,
@@ -149,6 +158,11 @@ impl MenuBar {
         }
         self.login.set_enabled(!state.logged_in && !state.busy);
         self.logout.set_enabled(state.logged_in);
+        self.sidebar.set_text(if state.sidebar_hidden {
+            "Show Sidebar"
+        } else {
+            "Hide Sidebar"
+        });
         let piece = format!("piece:{}", state.piece_set.as_deref().unwrap_or(""));
         for i in &self.pieces {
             i.set_checked(i.id().0 == piece);
@@ -174,6 +188,7 @@ fn action(id: &str) -> Option<Action> {
         "login" => Action::Login,
         "logout" => Action::Logout,
         "random" => Action::Randomize,
+        "sidebar" => Action::ToggleSidebar,
         _ => {
             if let Some(set) = id.strip_prefix("piece:") {
                 Action::Pieces(name(set))
@@ -201,5 +216,6 @@ mod tests {
             Some(Action::Board(Some("wood4".into())))
         );
         assert_eq!(action("nonsense"), None);
+        assert!(SIDEBAR_KEY.parse::<Accelerator>().is_ok());
     }
 }

@@ -67,11 +67,7 @@ impl BoardView {
         look: &Look,
         movable: Option<Color>,
     ) -> Option<Intent> {
-        let avail = ui.available_rect_before_wrap();
-        // Whole points per square keeps square edges and piece rasters crisp.
-        let side = (avail.width().min(avail.height()) / 8.0).floor() * 8.0;
-        let min = (avail.center() - Vec2::splat(side / 2.0)).round();
-        let rect = Rect::from_min_size(min, Vec2::splat(side));
+        let rect = board_rect(ui.available_rect_before_wrap());
         let resp = ui.allocate_rect(rect, Sense::click_and_drag());
         let geo = Geometry {
             rect,
@@ -289,6 +285,14 @@ fn paint_coordinates(p: &Painter, geo: &Geometry, sq: Square, ink: Color32) {
         let pos = r.left_top() + Vec2::new(pad * 0.8, pad * 0.5);
         p.text(pos, Align2::LEFT_TOP, sq.rank().char(), font, ink);
     }
+}
+
+/// The largest square board centred in `area`. Whole points per square keep
+/// square edges and piece rasters crisp.
+pub fn board_rect(area: Rect) -> Rect {
+    let side = (area.width().min(area.height()) / 8.0).floor() * 8.0;
+    let min = (area.center() - Vec2::splat(side / 2.0)).round();
+    Rect::from_min_size(min, Vec2::splat(side))
 }
 
 /// Maps squares to screen space. White is at the bottom unless flipped.

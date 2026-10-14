@@ -13,6 +13,7 @@ pub struct Settings {
     pub piece_set: Option<String>,
     /// Lichess board theme name; `None` is the theme's own colours.
     pub board: Option<String>,
+    pub sidebar_hidden: bool,
 }
 
 impl Settings {
@@ -46,6 +47,7 @@ mod tests {
             username: Some("magnus".into()),
             piece_set: Some("fantasy".into()),
             board: None,
+            sidebar_hidden: true,
         };
         assert_eq!(
             toml::from_str::<Settings>(&toml::to_string(&s).unwrap()).unwrap(),

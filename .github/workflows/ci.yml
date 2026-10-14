@@ -9,15 +9,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The name `check` is the required status check on main.
   check:
     # Mac first. macOS also avoids the X11/Wayland system libs eframe needs on Linux.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      # Packaging smoke test, so a PR can't quietly break the release: build
+      # the app and DMG for this runner's architecture and run the binary
+      # from inside the bundle.
+      - name: Package
+        run: |
+          cargo build --release --locked
+          packaging/macos/bundle.sh target/release/caturankam dist/Caturankam.app 0.0.0-ci
+          dist/Caturankam.app/Contents/MacOS/Caturankam --version
+          packaging/macos/dmg.sh dist/Caturankam.app dist/Caturankam-ci.dmg

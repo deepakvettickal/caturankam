@@ -1,11 +1,11 @@
-# Original: Lichess as is. Clean, fast, familiar.
+# Original: a calm, normal chessboard. Paper, hairlines, one highlighter accent.
 name = "Original"
 id = "original"
 
 [board]
-light = "#F0D9B5"
-dark  = "#B58863"
-highlight = "#CDD26A"   # selected square and last move
+light = "#ECE6D8"
+dark  = "#B3A589"
+highlight = "#E3E866"   # selected square and last move
 coordinates = "subtle"  # none | subtle
 
 [pieces]
@@ -15,7 +15,10 @@ set = "pieces/"         # wK.svg ... bP.svg (Cburnett, BSD-3-Clause, see ASSETS.
 move_ms = 200
 
 [ui]
-background = "#161512"
-panel = "#262421"
-text = "#BABABA"
-accent = "#629924"
+background = "#F6F6F2"  # paper
+surface = "#FFFFFF"     # buttons, cards
+line = "#E1E1DA"        # hairlines
+text = "#1D1D1B"
+muted = "#77776F"
+primary = "#1D1D1B"     # the one dark button
+accent = "#EDF07B"      # highlighter

@@ -29,6 +29,18 @@ const SEEKS: [(u32, u32); 5] = [(10, 0), (10, 5), (15, 10), (30, 0), (30, 20)];
 const AI_CLOCKS: [(u32, u32); 6] = [(3, 2), (5, 0), (5, 3), (10, 0), (10, 5), (15, 10)];
 const SEEK_KEYS: [&str; 5] = ["1", "2", "3", "4", "5"];
 const AI_KEYS: [&str; 6] = ["6", "7", "8", "9", "0", "-"];
+/// Challenging a friend allows Blitz too (Bullet isn't playable through the
+/// Board API). The picker starts on 5+3.
+const FRIEND_CLOCKS: [(u32, u32); 8] = [
+    (3, 0),
+    (3, 2),
+    (5, 0),
+    (5, 3),
+    (10, 0),
+    (10, 5),
+    (15, 10),
+    (30, 0),
+];
 const NOTICE_SECS: f64 = 6.0;
 /// After hiding the sidebar, "Show sidebar [S]" stays this long, then fades.
 const HINT_SECS: f64 = 2.0;
@@ -88,6 +100,13 @@ pub enum Action {
     /// Esc: decline a draw, cancel a seek or a pending resign.
     Escape,
     BackToLobby,
+    /// Y: accept a draw offer or the incoming challenge.
+    Accept,
+    ClaimVictory,
+    /// U: focus the friend's username field.
+    FocusFriend,
+    /// Send the challenge to the friend in the username field.
+    ChallengeFriend,
     /// Step through the game's history: one move back or forward, to the
     /// start, back to live, or to the position after a given ply.
     Back,
@@ -108,9 +127,13 @@ enum Account {
 
 enum Play {
     Local,
-    Seeking {
+    /// Waiting for a game: a seek, or a challenge to a friend.
+    Waiting {
         label: String,
+        /// When the seek or challenge closed; the game should follow shortly.
         ended_at: Option<f64>,
+        /// For a challenge: who, and its id once Lichess has one.
+        challenge: Option<(String, Option<String>)>,
     },
     Online(Box<OnlineGame>),
 }
@@ -119,6 +142,10 @@ struct Lobby {
     rated: bool,
     ai_level: u8,
     ai_color: Option<Side>,
+    /// Challenge a friend: their username and an index into `FRIEND_CLOCKS`.
+    friend: String,
+    friend_clock: usize,
+    focus_friend: bool,
 }
 
 struct App {
@@ -149,6 +176,8 @@ struct App {
     title: String,
     /// The ply being looked at while stepping through history; `None` is live.
     viewing: Option<usize>,
+    /// Challenges to us, oldest first.
+    incoming: Vec<caturankam_lichess::Challenge>,
 }
 
 impl App {
@@ -187,6 +216,9 @@ impl App {
                 rated: false,
                 ai_level: 3,
                 ai_color: None,
+                friend: String::new(),
+                friend_clock: 3,
+                focus_friend: false,
             },
             notice: None,
             show_appearance: false,
@@ -198,6 +230,7 @@ impl App {
             sidebar_hidden_at: None,
             title: String::new(),
             viewing: None,
+            incoming: Vec::new(),
         };
         if let Some(d) = &app.demo {
             if let Ok((game, _)) = Game::from_uci("startpos", &d.moves) {
@@ -294,14 +327,21 @@ impl App {
         for evt in events {
             self.on_event(ctx, evt);
         }
-        if let Play::Seeking {
-            ended_at: Some(t), ..
-        } = self.play
+        if let Play::Waiting {
+            ended_at: Some(t),
+            challenge,
+            ..
+        } = &self.play
         {
-            // The seek closed but no game arrived: it expired.
-            if ctx.input(|i| i.time) - t > 3.0 {
+            // The seek or challenge closed but no game arrived.
+            if ctx.input(|i| i.time) - t > 5.0 {
+                let msg = if challenge.is_some() {
+                    "The game didn't start. Try again."
+                } else {
+                    "No opponent found. Try again."
+                };
                 self.play = Play::Local;
-                self.notify(ctx, "No opponent found. Try again.");
+                self.notify(ctx, msg);
             } else {
                 ctx.request_repaint_after(Duration::from_millis(500));
             }
@@ -345,10 +385,49 @@ impl App {
                 self.notify(ctx, msg);
             }
             Evt::SeekEnded => {
-                if let Play::Seeking { ended_at, .. } = &mut self.play {
+                if let Play::Waiting { ended_at, .. } = &mut self.play {
                     *ended_at = Some(ctx.input(|i| i.time));
                 }
             }
+            Evt::ChallengeCreated(id) => {
+                if let Play::Waiting {
+                    challenge: Some((_, slot)),
+                    ..
+                } = &mut self.play
+                {
+                    *slot = Some(id);
+                }
+            }
+            Evt::ChallengeEnded(done) => {
+                let now = ctx.input(|i| i.time);
+                if let Play::Waiting {
+                    challenge: Some((to, _)),
+                    ended_at,
+                    ..
+                } = &mut self.play
+                {
+                    let to = to.clone();
+                    match done.as_str() {
+                        // The game itself arrives through the event stream.
+                        "accepted" => *ended_at = Some(now),
+                        "declined" => {
+                            self.play = Play::Local;
+                            self.notify(ctx, format!("{to} declined the challenge."));
+                        }
+                        "failed" => self.play = Play::Local, // the notice is already up
+                        _ => {
+                            self.play = Play::Local;
+                            self.notify(ctx, format!("{to} didn't answer in time."));
+                        }
+                    }
+                }
+            }
+            Evt::Incoming(ch) => {
+                if !self.incoming.iter().any(|c| c.id == ch.id) {
+                    self.incoming.push(ch);
+                }
+            }
+            Evt::IncomingGone(id) => self.incoming.retain(|c| c.id != id),
             Evt::Game(ev) => self.on_game_event(ctx, ev),
             Evt::Fetched { url, bytes } => match bytes {
                 Ok(b) => self.assets.fetched(&url, b),
@@ -366,6 +445,8 @@ impl App {
             GameEvent::GameFull(full) => {
                 let my_id = self.username().unwrap_or_default().to_lowercase();
                 let same = self.online().is_some_and(|g| g.id == full.id);
+                // An accepted challenge's game has the challenge's id.
+                self.incoming.retain(|c| c.id != full.id);
                 match OnlineGame::new(*full, &my_id) {
                     Ok(g) => {
                         if !same {
@@ -413,7 +494,8 @@ impl App {
                 claim_win_in_seconds,
             } => {
                 if let Play::Online(g) = &mut self.play {
-                    g.opponent_gone = gone.then_some(claim_win_in_seconds.unwrap_or(0));
+                    let wait = Duration::from_secs(claim_win_in_seconds.unwrap_or(0).into());
+                    g.opponent_gone = gone.then(|| Instant::now() + wait);
                 }
             }
             GameEvent::Other => {}
@@ -464,6 +546,23 @@ impl App {
         }
     }
 
+    /// Cancels a seek or withdraws a challenge, whichever we're waiting on.
+    fn cancel_waiting(&mut self, ctx: &egui::Context) {
+        if let Play::Waiting { challenge, .. } = &self.play {
+            let cmd = match challenge {
+                Some((_, id)) => Cmd::CancelChallenge(id.clone()),
+                None => Cmd::CancelSeek,
+            };
+            self.net(ctx).send(cmd);
+            self.play = Play::Local;
+        }
+    }
+
+    /// Incoming challenges are offered only between games.
+    fn incoming_shown(&self) -> bool {
+        matches!(self.play, Play::Local) && !self.incoming.is_empty()
+    }
+
     /// Sends a game command for the current online game, if there is one.
     fn game_cmd(&self, make: impl FnOnce(String) -> Cmd) {
         if let (Some(g), Some(net)) = (self.online(), &self.net) {
@@ -507,9 +606,7 @@ impl App {
                 }
             }
             Action::Logout => {
-                if let Play::Seeking { .. } = self.play {
-                    self.net(ctx).send(Cmd::CancelSeek);
-                }
+                self.cancel_waiting(ctx);
                 self.net(ctx).send(Cmd::Logout);
             }
             Action::Pieces(set) => {
@@ -560,9 +657,10 @@ impl App {
                     speed(minutes, increment),
                     if rated { "rated" } else { "casual" }
                 );
-                self.play = Play::Seeking {
+                self.play = Play::Waiting {
                     label,
                     ended_at: None,
+                    challenge: None,
                 };
                 self.net(ctx).send(Cmd::Seek {
                     minutes,
@@ -590,12 +688,59 @@ impl App {
                     Some(Side::Black) => None,
                 };
             }
-            Action::Escape if self.board.premove.is_some() => self.board.premove = None,
-            Action::CancelSeek | Action::Escape if matches!(self.play, Play::Seeking { .. }) => {
-                if let Some(net) = &self.net {
-                    net.send(Cmd::CancelSeek);
+            Action::FocusFriend if in_lobby => {
+                self.lobby.focus_friend = true;
+                if !self.sidebar_visible() {
+                    self.act(ctx, Action::ToggleSidebar);
                 }
-                self.play = Play::Local;
+            }
+            Action::ChallengeFriend if in_lobby => {
+                let to = self.lobby.friend.trim().to_string();
+                if !caturankam_lichess::valid_username(&to) {
+                    self.notify(ctx, "Lichess usernames are 2–30 letters, digits, - or _.");
+                    return;
+                }
+                let (minutes, increment) = FRIEND_CLOCKS[self.lobby.friend_clock];
+                let rated = self.lobby.rated;
+                let label = format!(
+                    "{minutes}+{increment} {} · {}",
+                    speed(minutes, increment),
+                    if rated { "rated" } else { "casual" }
+                );
+                self.play = Play::Waiting {
+                    label,
+                    ended_at: None,
+                    challenge: Some((to.clone(), None)),
+                };
+                self.net(ctx).send(Cmd::Challenge {
+                    username: to,
+                    limit_secs: minutes * 60,
+                    increment,
+                    rated,
+                    color: None,
+                });
+            }
+            Action::Accept if draw_offer => self.game_cmd(|game| Cmd::Draw { game, accept: true }),
+            Action::Accept if self.incoming_shown() => {
+                let ch = self.incoming.remove(0);
+                self.net(ctx).send(Cmd::AnswerChallenge {
+                    id: ch.id,
+                    accept: true,
+                });
+            }
+            Action::ClaimVictory if self.online().is_some_and(|g| g.can_claim_victory()) => {
+                self.game_cmd(Cmd::ClaimVictory)
+            }
+            Action::Escape if self.board.premove.is_some() => self.board.premove = None,
+            Action::CancelSeek | Action::Escape if matches!(self.play, Play::Waiting { .. }) => {
+                self.cancel_waiting(ctx);
+            }
+            Action::Escape if self.incoming_shown() => {
+                let ch = self.incoming.remove(0);
+                self.net(ctx).send(Cmd::AnswerChallenge {
+                    id: ch.id,
+                    accept: false,
+                });
             }
             Action::Abort if can_abort => self.game_cmd(Cmd::Abort),
             Action::Resign if live && !can_abort => {
@@ -643,7 +788,9 @@ impl App {
             (Key::A, Action::Abort),
             (Key::X, Action::Resign),
             (Key::O, Action::OfferDraw),
-            (Key::Y, Action::AnswerDraw(true)),
+            (Key::Y, Action::Accept),
+            (Key::V, Action::ClaimVictory),
+            (Key::U, Action::FocusFriend),
             (Key::Escape, Action::Escape),
             (Key::ArrowLeft, Action::Back),
             (Key::ArrowRight, Action::Forward),
@@ -751,7 +898,7 @@ impl App {
                         self.account_row(ui);
                         match &self.play {
                             Play::Local => self.local_panel(ui),
-                            Play::Seeking { .. } => self.seeking_panel(ui),
+                            Play::Waiting { .. } => self.waiting_panel(ui),
                             Play::Online(_) => self.online_panel(ui),
                         }
                     });
@@ -877,7 +1024,39 @@ impl App {
         ui.add_space(4.0);
         ui.label(muted(
             &pal,
-            "Lichess pairs apps like this one at Rapid and Classical only. Blitz works against the computer.",
+            "Lichess pairs apps like this one at Rapid and Classical only. Blitz works against the computer and friends.",
+        ));
+        rule(ui);
+
+        section(ui, &pal, "Challenge a friend", |ui| kbd(ui, &pal, "U"));
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.lobby.friend)
+                    .hint_text("Lichess username")
+                    .desired_width(130.0)
+                    .char_limit(30),
+            );
+            if std::mem::take(&mut self.lobby.focus_friend) {
+                field.request_focus();
+            }
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            let (m, inc) = FRIEND_CLOCKS[self.lobby.friend_clock];
+            egui::ComboBox::from_id_salt("friend-clock")
+                .selected_text(RichText::new(format!("{m}+{inc}")).font(mono(13.0)))
+                .width(64.0)
+                .show_ui(ui, |ui| {
+                    for (i, &(m, inc)) in FRIEND_CLOCKS.iter().enumerate() {
+                        let text = format!("{m}+{inc}  {}", speed(m, inc));
+                        ui.selectable_value(&mut self.lobby.friend_clock, i, text);
+                    }
+                });
+            if button(ui, &pal, "Send", Some("↵"), Kind::Secondary).clicked() || enter {
+                self.act(&ctx, Action::ChallengeFriend);
+            }
+        });
+        ui.label(muted(
+            &pal,
+            "Rated follows Quick pairing; colour is random.",
         ));
         rule(ui);
 
@@ -919,19 +1098,24 @@ impl App {
         }
     }
 
-    fn seeking_panel(&mut self, ui: &mut egui::Ui) {
+    fn waiting_panel(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
         let ctx = ui.ctx().clone();
-        let Play::Seeking { label, ended_at } = &self.play else {
+        let Play::Waiting {
+            label,
+            ended_at,
+            challenge,
+        } = &self.play
+        else {
             return;
         };
-        section(ui, &pal, "Quick pairing", |_| {});
-        let text = if ended_at.is_some() {
-            "Starting game"
-        } else {
-            "Finding an opponent"
+        let (title, text) = match (challenge, ended_at) {
+            (_, Some(_)) => ("Starting", "Starting game".to_string()),
+            (Some((to, _)), None) => ("Challenge", format!("Waiting for {to} to accept")),
+            (None, None) => ("Quick pairing", "Finding an opponent".to_string()),
         };
-        waiting(ui, text);
+        section(ui, &pal, title, |_| {});
+        waiting(ui, &text);
         ui.label(
             RichText::new(label.as_str())
                 .font(mono(12.5))
@@ -977,11 +1161,25 @@ impl App {
                 });
             });
         }
-        if let Some(secs) = g.opponent_gone {
-            ui.label(muted(
-                &pal,
-                format!("Opponent left. You can claim victory in {secs}s on lichess.org."),
-            ));
+        if let Some(at) = g.opponent_gone.filter(|_| !g.is_over()) {
+            let left = at.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                ui.horizontal(|ui| {
+                    ui.label(muted(&pal, "Your opponent left."));
+                    if button(ui, &pal, "Claim victory", Some("V"), Kind::Primary).clicked() {
+                        action = Some(Action::ClaimVictory);
+                    }
+                });
+            } else {
+                ui.label(muted(
+                    &pal,
+                    format!(
+                        "Opponent left. You can claim victory in {}s.",
+                        left.as_secs() + 1
+                    ),
+                ));
+                ui.ctx().request_repaint_after(Duration::from_millis(250));
+            }
         }
         ui.add_space(6.0);
         history_hint(ui, &pal, self.viewing, g.game.ply());
@@ -1050,6 +1248,7 @@ impl App {
         let field = ui.max_rect();
         style::hatch(ui.painter(), field, pal.line);
         self.show_sidebar_hint(ui);
+        self.incoming_card(ui);
 
         // Just enough room for the frame and its crop-mark overshoot.
         let area = field.shrink(FRAME + style::CROP + 2.0);
@@ -1060,7 +1259,7 @@ impl App {
         let movable = match &self.play {
             _ if self.promoting.is_some() || self.viewing.is_some() => None,
             Play::Local => (self.local.outcome() == Outcome::Unknown).then(|| self.local.turn()),
-            Play::Seeking { .. } => None,
+            Play::Waiting { .. } => None,
             // Always our side in a live game: on the opponent's turn it's a premove.
             Play::Online(g) => (!g.is_over()).then_some(g.me),
         };
@@ -1090,6 +1289,66 @@ impl App {
             } else {
                 self.play_move(i.from, i.to, None, !i.dragged, now);
             }
+        }
+    }
+
+    /// The oldest challenge to us, as a card over the board: Y accepts, Esc declines.
+    fn incoming_card(&mut self, ui: &mut egui::Ui) {
+        if !self.incoming_shown() {
+            return;
+        }
+        let pal = self.pal;
+        let ctx = ui.ctx().clone();
+        let ch = &self.incoming[0];
+        let who = match (&ch.challenger.title, ch.challenger.rating) {
+            (Some(t), Some(r)) => format!("{t} {} ({r})", ch.challenger.name),
+            (None, Some(r)) => format!("{} ({r})", ch.challenger.name),
+            (Some(t), None) => format!("{t} {}", ch.challenger.name),
+            (None, None) => ch.challenger.name.clone(),
+        };
+        let clock = match ch.time_control {
+            caturankam_lichess::TimeControl::Clock { limit, increment } => {
+                format!("{}+{increment}", limit / 60)
+            }
+            _ => String::new(),
+        };
+        let kind = if ch.rated { "rated" } else { "casual" };
+        let more = self.incoming.len() - 1;
+        let mut answer = None;
+        egui::Area::new("incoming".into())
+            .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 16.0))
+            .show(&ctx, |ui| {
+                egui::Frame::new()
+                    .fill(pal.surface)
+                    .stroke(Stroke::new(1.0, pal.line))
+                    .corner_radius(3)
+                    .inner_margin(Margin::same(14))
+                    .shadow(egui::Shadow {
+                        offset: [0, 4],
+                        blur: 16,
+                        spread: 0,
+                        color: Color32::from_black_alpha(30),
+                    })
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(format!("{who} challenges you")).font(medium(14.0)));
+                        let detail = format!("{clock} {} · {kind}", ch.speed);
+                        ui.label(RichText::new(detail).font(mono(12.0)).color(pal.muted));
+                        if more > 0 {
+                            ui.label(muted(&pal, format!("+{more} more waiting")));
+                        }
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if button(ui, &pal, "Accept", Some("Y"), Kind::Primary).clicked() {
+                                answer = Some(Action::Accept);
+                            }
+                            if button(ui, &pal, "Decline", Some("esc"), Kind::Secondary).clicked() {
+                                answer = Some(Action::Escape);
+                            }
+                        });
+                    });
+            });
+        if let Some(a) = answer {
+            self.act(&ctx, a);
         }
     }
 
@@ -1414,6 +1673,8 @@ fn game_title(g: &OnlineGame, now: Instant) -> String {
         title = format!("{title}   ·   {}", g.result());
     } else if g.opponent_offers_draw {
         title.push_str("   ·   Draw offered: Y accept, Esc decline");
+    } else if g.can_claim_victory() {
+        title.push_str("   ·   Opponent left: V claims victory");
     }
     title
 }

@@ -71,6 +71,17 @@ pub enum Event {
     GameFinish {
         game: GameInfo,
     },
+    /// A challenge to or from us (ours appear here too).
+    Challenge {
+        challenge: Box<Challenge>,
+        compat: Option<Compat>,
+    },
+    ChallengeCanceled {
+        challenge: ChallengeId,
+    },
+    ChallengeDeclined {
+        challenge: ChallengeId,
+    },
     #[serde(other)]
     Other,
 }
@@ -92,6 +103,69 @@ impl GameInfo {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Compat {
     pub board: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Challenge {
+    pub id: String,
+    pub challenger: ChallengeUser,
+    pub dest_user: Option<ChallengeUser>,
+    pub variant: Variant,
+    pub rated: bool,
+    pub speed: String,
+    pub time_control: TimeControl,
+    /// `in` or `out`, from our point of view.
+    pub direction: Option<String>,
+}
+
+impl Challenge {
+    /// Whether we can play it here: standard chess, a real-time clock, and
+    /// Board-API compatible (not, say, bullet).
+    pub fn playable(&self, compat: Option<&Compat>) -> bool {
+        self.variant.key == "standard"
+            && matches!(self.time_control, TimeControl::Clock { .. })
+            && compat.is_none_or(|c| c.board)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChallengeId {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChallengeUser {
+    pub id: String,
+    pub name: String,
+    pub rating: Option<u32>,
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Variant {
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum TimeControl {
+    /// Seconds.
+    Clock {
+        limit: u32,
+        increment: u32,
+    },
+    Correspondence,
+    Unlimited,
+}
+
+/// Lichess usernames: 2–30 letters, digits, `_` or `-`. Checked before a
+/// name goes into a URL path.
+pub fn valid_username(name: &str) -> bool {
+    (2..=30).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 /// `/api/board/game/stream/{id}`.
@@ -283,6 +357,72 @@ impl Client {
     }
 
     /// Revokes the token on Lichess (logout).
+    /// Challenges `username` to a real-time game and waits for the answer:
+    /// returns `accepted`, `declined` or `canceled`. `on_created` gets the
+    /// challenge id as soon as Lichess has it. Dropping the future withdraws
+    /// the challenge (the stream keeps it alive past Lichess's 20 s expiry).
+    pub async fn challenge(
+        &self,
+        username: &str,
+        limit_secs: u32,
+        increment: u32,
+        rated: bool,
+        color: Option<Side>,
+        mut on_created: impl FnMut(String),
+    ) -> Result<String, Error> {
+        if !valid_username(username) {
+            return Err(Error::Api {
+                status: 400,
+                body: format!("{username:?} isn't a Lichess username"),
+            });
+        }
+        let mut form = vec![
+            ("clock.limit", limit_secs.to_string()),
+            ("clock.increment", increment.to_string()),
+            ("rated", rated.to_string()),
+            ("keepAliveStream", "true".into()),
+        ];
+        if let Some(c) = color {
+            form.push(("color", c.as_str().into()));
+        }
+        let resp = send(self.post(&format!("/api/challenge/{username}")).form(&form)).await?;
+        let mut done = String::from("canceled");
+        ndjson(resp, |v: serde_json::Value| {
+            if let Some(d) = v.get("done").and_then(|d| d.as_str()) {
+                done = d.to_string();
+            } else if let Some(id) = v.get("id").and_then(|id| id.as_str()) {
+                on_created(id.to_string());
+            }
+        })
+        .await?;
+        Ok(done)
+    }
+
+    pub async fn accept_challenge(&self, id: &str) -> Result<(), Error> {
+        send(self.post(&format!("/api/challenge/{id}/accept"))).await?;
+        Ok(())
+    }
+
+    pub async fn decline_challenge(&self, id: &str) -> Result<(), Error> {
+        send(
+            self.post(&format!("/api/challenge/{id}/decline"))
+                .form(&[("reason", "generic")]),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn cancel_challenge(&self, id: &str) -> Result<(), Error> {
+        send(self.post(&format!("/api/challenge/{id}/cancel"))).await?;
+        Ok(())
+    }
+
+    /// Wins the game when the opponent has been gone long enough.
+    pub async fn claim_victory(&self, game: &str) -> Result<(), Error> {
+        send(self.post(&format!("/api/board/game/{game}/claim-victory"))).await?;
+        Ok(())
+    }
+
     pub async fn revoke(&self) -> Result<(), Error> {
         let req = self
             .http
@@ -399,7 +539,58 @@ mod tests {
         assert_eq!(game.game_id, "YfjTIV43");
         assert!(game.board_compatible());
 
-        let challenge = r#"{"type":"challenge","challenge":{"id":"x"}}"#;
-        assert!(matches!(serde_json::from_str(challenge), Ok(Event::Other)));
+        let unknown = r#"{"type":"somethingNew","x":1}"#;
+        assert!(matches!(serde_json::from_str(unknown), Ok(Event::Other)));
+    }
+
+    // From the Lichess docs' challenge examples.
+    #[test]
+    fn parses_challenges() {
+        let ev = r##"{"type":"challenge","challenge":{"id":"7pGLxJ4F","url":"https://lichess.org/7pGLxJ4F",
+            "status":"created","challenger":{"id":"bobby","name":"Bobby","rating":1635,"title":"IM","online":true,"lag":4},
+            "destUser":{"id":"mary","name":"Mary","rating":1437,"title":null,"provisional":true,"online":true},
+            "variant":{"key":"standard","name":"Standard","short":"Std"},"rated":true,"speed":"rapid",
+            "timeControl":{"type":"clock","limit":600,"increment":0,"show":"10+0"},"color":"random",
+            "finalColor":"black","perf":{"icon":"#","name":"Rapid"},"direction":"in"},
+            "compat":{"bot":false,"board":true}}"##;
+        let Event::Challenge { challenge, compat } = serde_json::from_str(ev).unwrap() else {
+            panic!("expected a challenge")
+        };
+        assert_eq!(challenge.challenger.name, "Bobby");
+        assert_eq!(challenge.direction.as_deref(), Some("in"));
+        assert!(matches!(
+            challenge.time_control,
+            TimeControl::Clock {
+                limit: 600,
+                increment: 0
+            }
+        ));
+        assert!(challenge.playable(compat.as_ref()));
+
+        let corr = ev.replace(
+            r#"{"type":"clock","limit":600,"increment":0,"show":"10+0"}"#,
+            r#"{"type":"correspondence","daysPerTurn":2}"#,
+        );
+        let Event::Challenge { challenge, compat } = serde_json::from_str(&corr).unwrap() else {
+            panic!("expected a challenge")
+        };
+        assert!(!challenge.playable(compat.as_ref()));
+
+        let gone =
+            r#"{"type":"challengeCanceled","challenge":{"id":"7pGLxJ4F","status":"canceled"}}"#;
+        assert!(
+            matches!(serde_json::from_str(gone), Ok(Event::ChallengeCanceled { challenge }) if challenge.id == "7pGLxJ4F")
+        );
+    }
+
+    #[test]
+    fn usernames_are_checked_before_reaching_a_url() {
+        assert!(valid_username("the_vetti"));
+        assert!(valid_username("Magnus-Carlsen"));
+        assert!(!valid_username("a"));
+        assert!(!valid_username("../account"));
+        assert!(!valid_username("bob/accept"));
+        assert!(!valid_username("bob?x=1"));
+        assert!(!valid_username(&"x".repeat(31)));
     }
 }

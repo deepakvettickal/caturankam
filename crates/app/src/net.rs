@@ -44,6 +44,22 @@ pub enum Cmd {
         game: String,
         accept: bool,
     },
+    ClaimVictory(String),
+    /// Challenge a friend; the answer arrives as `Evt::ChallengeEnded`.
+    Challenge {
+        username: String,
+        limit_secs: u32,
+        increment: u32,
+        rated: bool,
+        color: Option<Side>,
+    },
+    /// Withdraw our challenge (its id, once Lichess has given one).
+    CancelChallenge(Option<String>),
+    /// Accept or decline an incoming challenge.
+    AnswerChallenge {
+        id: String,
+        accept: bool,
+    },
     /// Download a public asset and save it to `cache`.
     Fetch {
         url: String,
@@ -62,6 +78,14 @@ pub enum Evt {
     },
     Notice(String),
     SeekEnded,
+    /// Our challenge exists on Lichess (so it can be withdrawn).
+    ChallengeCreated(String),
+    /// Our challenge was `accepted`, `declined` or `canceled`.
+    ChallengeEnded(String),
+    /// Someone challenges us to a game we can play here.
+    Incoming(lichess::Challenge),
+    /// An incoming challenge was withdrawn or answered elsewhere.
+    IncomingGone(String),
     Game(GameEvent),
     Fetched {
         url: String,
@@ -135,6 +159,7 @@ struct State {
     client: Option<Client>,
     events: Option<Owned>,
     seek: Option<Owned>,
+    challenge: Option<Owned>,
     login: Option<Owned>,
     session: UnboundedSender<SessionMsg>,
     out: Out,
@@ -147,6 +172,7 @@ async fn run(mut cmds: UnboundedReceiver<Cmd>, out: Out) {
         client: None,
         events: None,
         seek: None,
+        challenge: None,
         login: None,
         session,
         out,
@@ -165,6 +191,7 @@ async fn run(mut cmds: UnboundedReceiver<Cmd>, out: Out) {
 impl State {
     fn session_changed(&mut self, msg: SessionMsg) {
         self.seek = None;
+        self.challenge = None;
         match msg {
             Ok(token) => {
                 let c = Client::new(self.http.clone(), token);
@@ -221,6 +248,7 @@ impl State {
             Cmd::Logout => {
                 self.events = None;
                 self.seek = None;
+                self.challenge = None;
                 if let Some(c) = self.client.take() {
                     tokio::spawn(async move {
                         let _ = c.revoke().await; // best effort; the local token is gone either way
@@ -285,6 +313,43 @@ impl State {
             Cmd::Resign(game) => report(out, async move { c.resign(&game).await }),
             Cmd::Abort(game) => report(out, async move { c.abort(&game).await }),
             Cmd::Draw { game, accept } => report(out, async move { c.draw(&game, accept).await }),
+            Cmd::ClaimVictory(game) => report(out, async move { c.claim_victory(&game).await }),
+            Cmd::Challenge {
+                username,
+                limit_secs,
+                increment,
+                rated,
+                color,
+            } => {
+                self.challenge = Some(Owned(tokio::spawn(async move {
+                    let created = |id| out.send(Evt::ChallengeCreated(id));
+                    let outcome = c
+                        .challenge(&username, limit_secs, increment, rated, color, created)
+                        .await;
+                    match outcome {
+                        Ok(done) => out.send(Evt::ChallengeEnded(done)),
+                        Err(e) => {
+                            out.notice(e.to_string());
+                            out.send(Evt::ChallengeEnded("failed".into()));
+                        }
+                    }
+                })));
+            }
+            Cmd::CancelChallenge(id) => {
+                // Dropping the stream stops keeping it alive; cancelling ends it now.
+                self.challenge = None;
+                if let Some(id) = id {
+                    report(out, async move { c.cancel_challenge(&id).await });
+                }
+            }
+            Cmd::AnswerChallenge { id, accept } => report(out, async move {
+                // An accepted game arrives through the event stream.
+                if accept {
+                    c.accept_challenge(&id).await
+                } else {
+                    c.decline_challenge(&id).await
+                }
+            }),
             Cmd::Connect | Cmd::Login | Cmd::Logout | Cmd::Fetch { .. } => {
                 unreachable!("handled in State::handle")
             }
@@ -345,8 +410,23 @@ async fn event_loop(c: Client, session: UnboundedSender<SessionMsg>, out: Out) {
         let result = c
             .stream_events(|e| {
                 backoff.reset();
-                let Event::GameStart { game: info } = e else {
-                    return;
+                let info = match e {
+                    Event::GameStart { game } => game,
+                    // Only challenges *to* us that we can play here.
+                    Event::Challenge { challenge, compat } => {
+                        if challenge.direction.as_deref() == Some("in")
+                            && challenge.playable(compat.as_ref())
+                        {
+                            out.send(Evt::Incoming(*challenge));
+                        }
+                        return;
+                    }
+                    Event::ChallengeCanceled { challenge }
+                    | Event::ChallengeDeclined { challenge } => {
+                        out.send(Evt::IncomingGone(challenge.id));
+                        return;
+                    }
+                    _ => return,
                 };
                 let running = game
                     .as_ref()

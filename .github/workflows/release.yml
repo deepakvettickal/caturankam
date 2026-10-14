@@ -1,0 +1,125 @@
+name: Release
+
+# A `v*` tag builds, tests and packages the Mac app, then publishes a GitHub
+# release with the notes in packaging/release-notes/<tag>.md.
+# Dry runs publish nothing; the DMG is uploaded as a build artifact. They run
+# by hand ("Run workflow") and on PRs that change packaging.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/release.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS universal app
+    runs-on: macos-latest
+    env:
+      # All optional. With the certificate secrets the app is signed with a
+      # Developer ID; with the Apple ID ones too, the DMG is also notarized.
+      # Without them the app is ad-hoc signed (see the README's install notes).
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Version
+        id: version
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "caturankam"))')"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build both architectures
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Universal binary
+        run: |
+          mkdir -p universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/caturankam \
+            target/x86_64-apple-darwin/release/caturankam \
+            -output universal/caturankam
+          lipo -archs universal/caturankam
+          universal/caturankam --version
+
+      - name: Signing keychain
+        if: env.APPLE_CERTIFICATE_P12 != ''
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 16)"
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security list-keychains -d user -s "$keychain"
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "CODESIGN_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: App bundle and DMG
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          packaging/macos/bundle.sh universal/caturankam dist/Caturankam.app "$version"
+          dist/Caturankam.app/Contents/MacOS/Caturankam --version
+          packaging/macos/dmg.sh dist/Caturankam.app "dist/Caturankam-$version.dmg"
+          (cd dist && shasum -a 256 "Caturankam-$version.dmg" > checksums.txt)
+          cat dist/checksums.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-universal
+          path: |
+            dist/*.dmg
+            dist/checksums.txt
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: macos
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-universal
+          path: dist
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          name: Caturankam ${{ github.ref_name }}
+          body_path: packaging/release-notes/${{ github.ref_name }}.md
+          # v1.1.0-rc1 and the like are pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}

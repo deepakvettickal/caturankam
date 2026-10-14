@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>Caturankam</string>
+    <key>CFBundleDisplayName</key><string>Caturankam</string>
+    <key>CFBundleIdentifier</key><string>io.github.deepakvettickal.caturankam</string>
+    <key>CFBundleExecutable</key><string>Caturankam</string>
+    <key>CFBundleIconFile</key><string>caturankam</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+    <key>CFBundleVersion</key><string>__BUILD__</string>
+    <key>LSMinimumSystemVersion</key><string>11.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.board-games</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+    <key>NSHumanReadableCopyright</key><string>© 2026 deepakvettickal. MIT License. Not an official Lichess app.</string>
+</dict>
+</plist>

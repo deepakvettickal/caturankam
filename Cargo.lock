@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "caturankam"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "caturankam-core",
  "caturankam-lichess",
@@ -677,6 +677,7 @@ dependencies = [
  "memmap2",
  "muda",
  "objc2 0.6.5",
+ "resvg",
  "serde",
  "serde_json",
  "tokio",
@@ -685,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "caturankam-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "shakmaty",
  "thiserror 2.0.21",
@@ -693,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "caturankam-lichess"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
@@ -707,7 +708,7 @@ dependencies = [
 
 [[package]]
 name = "caturankam-theme"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",

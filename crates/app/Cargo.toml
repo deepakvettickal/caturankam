@@ -20,6 +20,7 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }  # network threa
 
 [dev-dependencies]
 serde_json.workspace = true
+resvg = { version = "0.45", default-features = false }  # already built for egui_extras; renders the app icon
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }  # native macOS menu bar

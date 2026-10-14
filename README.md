@@ -12,9 +12,33 @@ Caturankam for Lichess is an independent project, not an official Lichess app.
 
 ![Caturankam in dark mode: Lichess minimal-warmth pieces on the newspaper board, same position](docs/screenshots/dark.png)
 
+## Install
+
+**[Download the latest release](https://github.com/deepakvettickal/caturankam/releases/latest)**
+(`Caturankam-x.y.z.dmg`), open it, and drag **Caturankam** to **Applications**.
+Needs macOS 11 or later; runs natively on Apple Silicon and Intel.
+
+Or with [Homebrew](https://brew.sh), straight from this repository:
+
+```sh
+brew tap deepakvettickal/caturankam https://github.com/deepakvettickal/caturankam
+brew install --cask caturankam
+```
+
+**First launch.** Releases aren't notarized by Apple yet, so macOS blocks the app the
+first time:
+
+1. Open Caturankam, and choose **Done** when macOS says it can't be verified.
+2. Open **System Settings ▸ Privacy & Security**, scroll down, and click **Open Anyway**
+   next to Caturankam. Confirm with **Open Anyway** and your password.
+
+You only do this once. macOS may also ask to let Caturankam use your Keychain, where
+your Lichess login is stored; choose **Always Allow**. It asks again after each update,
+until releases are signed.
+
 ## What it does
 
-Early draft, **Original** mode, macOS first.
+Version 1, in the **Original** mode. Zen, Chaos and Ancient modes come later.
 
 - **Log in with Lichess:** OAuth with PKCE in your browser. The token stays in the macOS
   Keychain, never on disk.
@@ -62,11 +86,23 @@ image and piece set loaded and a larger window, it measured about 92 MB.
 - **Release binary:** 14 MB.
 - **Lazy loading:** the network thread, piece sets and boards load only when used.
 
-## Run
+## Build from source
+
+You need macOS and the stable [Rust toolchain](https://rustup.rs).
 
 ```sh
 cargo run --release
 ```
+
+To build the app and DMG as a release does:
+
+```sh
+cargo build --release
+packaging/macos/bundle.sh target/release/caturankam dist/Caturankam.app 1.0.0
+packaging/macos/dmg.sh dist/Caturankam.app dist/Caturankam-1.0.0.dmg
+```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the workflow and the release process.
 
 ### Screenshots and benchmarks
 
@@ -76,8 +112,9 @@ Demo mode gives a clean state that never touches your settings or login:
 CATURANKAM_DEMO=1 CATURANKAM_MOVES="e2e4 e7e5 g1f3" CATURANKAM_SHOT=out.png cargo run --release
 ```
 
-`CATURANKAM_DARK=1` switches to dark. With `CATURANKAM_SHOT` the window captures itself
-and quits.
+`CATURANKAM_DARK=1` switches to dark, and `CATURANKAM_PIECES` / `CATURANKAM_BOARD`
+pick a Lichess set and board. With `CATURANKAM_SHOT` the window captures itself and
+quits.
 
 ## Layout
 
@@ -108,16 +145,36 @@ and quits.
 - [ ] **Ancient:** chaturanga/shatranj art, piece names, war drums
 
 **Mac app**
-- [ ] `.app` bundle with an icon, installable to Applications
-- [ ] Code signing, so the Keychain doesn't ask again after every update
+- [x] `.app` bundle with an icon, a DMG, and a Homebrew cask
+- [x] First release, with a CHANGELOG and release workflow
+- [ ] Signing and notarization (needs an Apple Developer account), so macOS opens it
+      normally and the Keychain doesn't ask again after updates
 - [ ] Appearance: follow the system's light/dark setting
-- [ ] First release: `v0.1.0` tag and a CHANGELOG
+- [ ] Check for updates
 
 **Later**
 - [ ] Windows build with native menus
 - [ ] Post-game analysis with a local Stockfish (never during live games)
 - [ ] Offline shatranj against a local engine
 - [ ] User-made theme packs
+
+## Inspirations
+
+- **[Lichess](https://lichess.org):** the platform, the
+  [Board API](https://lichess.org/api#tag/board), and its open source:
+  [lila](https://github.com/lichess-org/lila),
+  [chessground](https://github.com/lichess-org/chessground) and the
+  [mobile app](https://github.com/lichess-org/mobile). Studied for behaviour; no code
+  copied.
+- **[Langfuse](https://langfuse.com):** the design language: paper, hairlines, one
+  highlighter accent, and a keyboard shortcut on every action.
+- **[spotifast](https://github.com/crmne/spotifast):** how to build a fast, native Rust
+  app on egui, how to package and release it for the Mac, and the fix for the Touch Bar
+  crash on close.
+- **[egui](https://github.com/emilk/egui)** and **[shakmaty](https://github.com/niklasf/shakmaty):**
+  the UI toolkit and the chess rules underneath.
+- **[Cburnett's pieces](https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces):**
+  the built-in set, and the knight in the app icon.
 
 ## Licence
 

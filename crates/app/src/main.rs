@@ -8,6 +8,7 @@ mod menu;
 mod net;
 mod online;
 mod settings;
+mod sound;
 mod style;
 
 use assets::{Assets, BOARDS, Fetch, PIECE_SETS, PieceSet};
@@ -25,10 +26,22 @@ use style::{Kind, Pal, button, kbd, medium, mono, muted, row, rule, section};
 /// Rapid and Classical: the only real-time controls Lichess lets Board API
 /// clients seek. (minutes, increment), on keys 1–5.
 const SEEKS: [(u32, u32); 5] = [(10, 0), (10, 5), (15, 10), (30, 0), (30, 20)];
-/// Against the computer Blitz is allowed too. Keys 6–0.
-const AI_CLOCKS: [(u32, u32); 5] = [(3, 2), (5, 3), (10, 0), (10, 5), (15, 10)];
+/// Against the computer Blitz is allowed too. Keys 6–0 and -.
+const AI_CLOCKS: [(u32, u32); 6] = [(3, 2), (5, 0), (5, 3), (10, 0), (10, 5), (15, 10)];
 const SEEK_KEYS: [&str; 5] = ["1", "2", "3", "4", "5"];
-const AI_KEYS: [&str; 5] = ["6", "7", "8", "9", "0"];
+const AI_KEYS: [&str; 6] = ["6", "7", "8", "9", "0", "-"];
+/// Challenging a friend allows Blitz too (Bullet isn't playable through the
+/// Board API). The picker starts on 5+3.
+const FRIEND_CLOCKS: [(u32, u32); 8] = [
+    (3, 0),
+    (3, 2),
+    (5, 0),
+    (5, 3),
+    (10, 0),
+    (10, 5),
+    (15, 10),
+    (30, 0),
+];
 const NOTICE_SECS: f64 = 6.0;
 /// After hiding the sidebar, "Show sidebar [S]" stays this long, then fades.
 const HINT_SECS: f64 = 2.0;
@@ -73,6 +86,7 @@ pub enum Action {
     /// Light (`false`) or dark (`true`) chrome.
     Dark(bool),
     ToggleDark,
+    ToggleSound,
     /// Index into `SEEKS`.
     Seek(usize),
     CancelSeek,
@@ -88,6 +102,20 @@ pub enum Action {
     /// Esc: decline a draw, cancel a seek or a pending resign.
     Escape,
     BackToLobby,
+    /// Y: accept a draw offer or the incoming challenge.
+    Accept,
+    ClaimVictory,
+    /// U: focus the friend's username field.
+    FocusFriend,
+    /// Send the challenge to the friend in the username field.
+    ChallengeFriend,
+    /// Step through the game's history: one move back or forward, to the
+    /// start, back to live, or to the position after a given ply.
+    Back,
+    Forward,
+    First,
+    Live,
+    View(usize),
 }
 
 enum Account {
@@ -101,9 +129,13 @@ enum Account {
 
 enum Play {
     Local,
-    Seeking {
+    /// Waiting for a game: a seek, or a challenge to a friend.
+    Waiting {
         label: String,
+        /// When the seek or challenge closed; the game should follow shortly.
         ended_at: Option<f64>,
+        /// For a challenge: who, and its id once Lichess has one.
+        challenge: Option<(String, Option<String>)>,
     },
     Online(Box<OnlineGame>),
 }
@@ -112,6 +144,10 @@ struct Lobby {
     rated: bool,
     ai_level: u8,
     ai_color: Option<Side>,
+    /// Challenge a friend: their username and an index into `FRIEND_CLOCKS`.
+    friend: String,
+    friend_clock: usize,
+    focus_friend: bool,
 }
 
 struct App {
@@ -140,6 +176,11 @@ struct App {
     sidebar_hidden_at: Option<f64>,
     /// The window title last sent, so it's only updated when it changes.
     title: String,
+    /// The ply being looked at while stepping through history; `None` is live.
+    viewing: Option<usize>,
+    /// Challenges to us, oldest first.
+    incoming: Vec<caturankam_lichess::Challenge>,
+    sound: sound::Player,
 }
 
 impl App {
@@ -178,6 +219,9 @@ impl App {
                 rated: false,
                 ai_level: 3,
                 ai_color: None,
+                friend: String::new(),
+                friend_clock: 3,
+                focus_friend: false,
             },
             notice: None,
             show_appearance: false,
@@ -188,6 +232,9 @@ impl App {
             demo,
             sidebar_hidden_at: None,
             title: String::new(),
+            viewing: None,
+            incoming: Vec::new(),
+            sound: sound::Player::default(),
         };
         if let Some(d) = &app.demo {
             if let Ok((game, _)) = Game::from_uci("startpos", &d.moves) {
@@ -234,6 +281,12 @@ impl App {
             egui::SystemTheme::Light
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(native));
+    }
+
+    fn play_sound(&mut self, s: sound::Sound) {
+        if !self.settings.muted {
+            self.sound.play(s);
+        }
     }
 
     fn notify(&mut self, ctx: &egui::Context, msg: impl Into<String>) {
@@ -284,14 +337,21 @@ impl App {
         for evt in events {
             self.on_event(ctx, evt);
         }
-        if let Play::Seeking {
-            ended_at: Some(t), ..
-        } = self.play
+        if let Play::Waiting {
+            ended_at: Some(t),
+            challenge,
+            ..
+        } = &self.play
         {
-            // The seek closed but no game arrived: it expired.
-            if ctx.input(|i| i.time) - t > 3.0 {
+            // The seek or challenge closed but no game arrived.
+            if ctx.input(|i| i.time) - t > 5.0 {
+                let msg = if challenge.is_some() {
+                    "The game didn't start. Try again."
+                } else {
+                    "No opponent found. Try again."
+                };
                 self.play = Play::Local;
-                self.notify(ctx, "No opponent found. Try again.");
+                self.notify(ctx, msg);
             } else {
                 ctx.request_repaint_after(Duration::from_millis(500));
             }
@@ -335,10 +395,49 @@ impl App {
                 self.notify(ctx, msg);
             }
             Evt::SeekEnded => {
-                if let Play::Seeking { ended_at, .. } = &mut self.play {
+                if let Play::Waiting { ended_at, .. } = &mut self.play {
                     *ended_at = Some(ctx.input(|i| i.time));
                 }
             }
+            Evt::ChallengeCreated(id) => {
+                if let Play::Waiting {
+                    challenge: Some((_, slot)),
+                    ..
+                } = &mut self.play
+                {
+                    *slot = Some(id);
+                }
+            }
+            Evt::ChallengeEnded(done) => {
+                let now = ctx.input(|i| i.time);
+                if let Play::Waiting {
+                    challenge: Some((to, _)),
+                    ended_at,
+                    ..
+                } = &mut self.play
+                {
+                    let to = to.clone();
+                    match done.as_str() {
+                        // The game itself arrives through the event stream.
+                        "accepted" => *ended_at = Some(now),
+                        "declined" => {
+                            self.play = Play::Local;
+                            self.notify(ctx, format!("{to} declined the challenge."));
+                        }
+                        "failed" => self.play = Play::Local, // the notice is already up
+                        _ => {
+                            self.play = Play::Local;
+                            self.notify(ctx, format!("{to} didn't answer in time."));
+                        }
+                    }
+                }
+            }
+            Evt::Incoming(ch) => {
+                if !self.incoming.iter().any(|c| c.id == ch.id) {
+                    self.incoming.push(ch);
+                }
+            }
+            Evt::IncomingGone(id) => self.incoming.retain(|c| c.id != id),
             Evt::Game(ev) => self.on_game_event(ctx, ev),
             Evt::Fetched { url, bytes } => match bytes {
                 Ok(b) => self.assets.fetched(&url, b),
@@ -356,12 +455,16 @@ impl App {
             GameEvent::GameFull(full) => {
                 let my_id = self.username().unwrap_or_default().to_lowercase();
                 let same = self.online().is_some_and(|g| g.id == full.id);
+                // An accepted challenge's game has the challenge's id.
+                self.incoming.retain(|c| c.id != full.id);
                 match OnlineGame::new(*full, &my_id) {
                     Ok(g) => {
                         if !same {
                             // A new game: reset the board and face our side.
                             self.board.reset();
+                            self.viewing = None;
                             self.board.flipped = g.me == Color::Black;
+                            self.play_sound(sound::Sound::Start);
                             self.promoting = None;
                             self.confirm_resign = false;
                             self.draw_offered = false;
@@ -376,14 +479,31 @@ impl App {
                     return;
                 };
                 // Finish with `g` (a mutable borrow of `self.play`) before touching `self` again.
-                let (result, over) = (g.update(&st), g.is_over());
+                let (ply, was_over) = (g.game.ply(), g.is_over());
+                let result = g.update(&st);
+                let (over, my_turn, moved) = (g.is_over(), g.my_turn(), g.game.ply() != ply);
                 if over {
                     self.promoting = None;
+                    self.board.premove = None;
+                }
+                if moved {
+                    self.viewing = None; // a new move snaps back to the live position
                 }
                 match result {
-                    Ok(Some(ev)) => self.board.animate(&ev, now),
+                    Ok(Some(ev)) => {
+                        self.board.animate(&ev, now);
+                        self.play_sound(sound::Sound::for_move(&ev));
+                    }
                     Ok(None) => {}
                     Err(e) => self.notify(ctx, format!("Out of sync with Lichess: {e}")),
+                }
+                if over && !was_over {
+                    self.play_sound(sound::Sound::End);
+                }
+                if my_turn && let Some((from, to)) = self.board.premove.take() {
+                    // Played at once, unanimated; dropped if it's no longer legal.
+                    let promo = self.game().is_promotion(from, to).then_some(Role::Queen);
+                    self.play_move(from, to, promo, false, now);
                 }
             }
             GameEvent::OpponentGone {
@@ -391,7 +511,8 @@ impl App {
                 claim_win_in_seconds,
             } => {
                 if let Play::Online(g) = &mut self.play {
-                    g.opponent_gone = gone.then_some(claim_win_in_seconds.unwrap_or(0));
+                    let wait = Duration::from_secs(claim_win_in_seconds.unwrap_or(0).into());
+                    g.opponent_gone = gone.then(|| Instant::now() + wait);
                 }
             }
             GameEvent::Other => {}
@@ -401,6 +522,7 @@ impl App {
     // ---- actions ----
 
     fn back_to_local(&mut self) {
+        self.viewing = None;
         self.play = Play::Local;
         self.board.reset();
         self.board.flipped = false;
@@ -435,9 +557,31 @@ impl App {
                 Err(_) => return, // only legal targets are offered, so this can't happen
             },
         };
+        self.viewing = None;
+        self.play_sound(sound::Sound::for_move(&ev));
+        if matches!(self.play, Play::Local) && self.local.outcome() != Outcome::Unknown {
+            self.play_sound(sound::Sound::End);
+        }
         if animate {
             self.board.animate(&ev, now);
         }
+    }
+
+    /// Cancels a seek or withdraws a challenge, whichever we're waiting on.
+    fn cancel_waiting(&mut self, ctx: &egui::Context) {
+        if let Play::Waiting { challenge, .. } = &self.play {
+            let cmd = match challenge {
+                Some((_, id)) => Cmd::CancelChallenge(id.clone()),
+                None => Cmd::CancelSeek,
+            };
+            self.net(ctx).send(cmd);
+            self.play = Play::Local;
+        }
+    }
+
+    /// Incoming challenges are offered only between games.
+    fn incoming_shown(&self) -> bool {
+        matches!(self.play, Play::Local) && !self.incoming.is_empty()
     }
 
     /// Sends a game command for the current online game, if there is one.
@@ -454,8 +598,20 @@ impl App {
             live.map_or((false, false), |g| (g.can_abort(), g.opponent_offers_draw));
         let live = live.is_some();
         match action {
+            Action::Back => {
+                let ply = self.game().ply();
+                self.viewing = Some(self.viewing.unwrap_or(ply).saturating_sub(1));
+            }
+            Action::Forward => {
+                let ply = self.game().ply();
+                self.viewing = self.viewing.map(|v| v + 1).filter(|&v| v < ply);
+            }
+            Action::First => self.viewing = (self.game().ply() > 0).then_some(0),
+            Action::Live => self.viewing = None,
+            Action::View(p) => self.viewing = (p < self.game().ply()).then_some(p),
             Action::NewGame => {
                 if matches!(self.play, Play::Local) {
+                    self.viewing = None;
                     self.local = Game::default();
                     self.board.reset();
                     self.promoting = None;
@@ -471,9 +627,7 @@ impl App {
                 }
             }
             Action::Logout => {
-                if let Play::Seeking { .. } = self.play {
-                    self.net(ctx).send(Cmd::CancelSeek);
-                }
+                self.cancel_waiting(ctx);
                 self.net(ctx).send(Cmd::Logout);
             }
             Action::Pieces(set) => {
@@ -492,6 +646,13 @@ impl App {
                 self.apply_mode(ctx);
             }
             Action::ToggleDark => self.act(ctx, Action::Dark(!self.settings.dark)),
+            Action::ToggleSound => {
+                self.settings.muted = !self.settings.muted;
+                self.settings.save();
+                if !self.settings.muted {
+                    self.play_sound(sound::Sound::Move); // a sample, so you hear it's on
+                }
+            }
             Action::ToggleSidebar => {
                 // Hide if it is showing now, show if it is hidden.
                 self.settings.sidebar_hidden = self.sidebar_visible();
@@ -524,9 +685,10 @@ impl App {
                     speed(minutes, increment),
                     if rated { "rated" } else { "casual" }
                 );
-                self.play = Play::Seeking {
+                self.play = Play::Waiting {
                     label,
                     ended_at: None,
+                    challenge: None,
                 };
                 self.net(ctx).send(Cmd::Seek {
                     minutes,
@@ -554,11 +716,59 @@ impl App {
                     Some(Side::Black) => None,
                 };
             }
-            Action::CancelSeek | Action::Escape if matches!(self.play, Play::Seeking { .. }) => {
-                if let Some(net) = &self.net {
-                    net.send(Cmd::CancelSeek);
+            Action::FocusFriend if in_lobby => {
+                self.lobby.focus_friend = true;
+                if !self.sidebar_visible() {
+                    self.act(ctx, Action::ToggleSidebar);
                 }
-                self.play = Play::Local;
+            }
+            Action::ChallengeFriend if in_lobby => {
+                let to = self.lobby.friend.trim().to_string();
+                if !caturankam_lichess::valid_username(&to) {
+                    self.notify(ctx, "Lichess usernames are 2–30 letters, digits, - or _.");
+                    return;
+                }
+                let (minutes, increment) = FRIEND_CLOCKS[self.lobby.friend_clock];
+                let rated = self.lobby.rated;
+                let label = format!(
+                    "{minutes}+{increment} {} · {}",
+                    speed(minutes, increment),
+                    if rated { "rated" } else { "casual" }
+                );
+                self.play = Play::Waiting {
+                    label,
+                    ended_at: None,
+                    challenge: Some((to.clone(), None)),
+                };
+                self.net(ctx).send(Cmd::Challenge {
+                    username: to,
+                    limit_secs: minutes * 60,
+                    increment,
+                    rated,
+                    color: None,
+                });
+            }
+            Action::Accept if draw_offer => self.game_cmd(|game| Cmd::Draw { game, accept: true }),
+            Action::Accept if self.incoming_shown() => {
+                let ch = self.incoming.remove(0);
+                self.net(ctx).send(Cmd::AnswerChallenge {
+                    id: ch.id,
+                    accept: true,
+                });
+            }
+            Action::ClaimVictory if self.online().is_some_and(|g| g.can_claim_victory()) => {
+                self.game_cmd(Cmd::ClaimVictory)
+            }
+            Action::Escape if self.board.premove.is_some() => self.board.premove = None,
+            Action::CancelSeek | Action::Escape if matches!(self.play, Play::Waiting { .. }) => {
+                self.cancel_waiting(ctx);
+            }
+            Action::Escape if self.incoming_shown() => {
+                let ch = self.incoming.remove(0);
+                self.net(ctx).send(Cmd::AnswerChallenge {
+                    id: ch.id,
+                    accept: false,
+                });
             }
             Action::Abort if can_abort => self.game_cmd(Cmd::Abort),
             Action::Resign if live && !can_abort => {
@@ -597,6 +807,7 @@ impl App {
             (Key::F, Action::Flip),
             (Key::S, Action::ToggleSidebar),
             (Key::T, Action::ToggleDark),
+            (Key::M, Action::ToggleSound),
             (Key::R, Action::Randomize),
             (Key::L, Action::Login),
             (Key::N, Action::NewGame),
@@ -606,8 +817,14 @@ impl App {
             (Key::A, Action::Abort),
             (Key::X, Action::Resign),
             (Key::O, Action::OfferDraw),
-            (Key::Y, Action::AnswerDraw(true)),
+            (Key::Y, Action::Accept),
+            (Key::V, Action::ClaimVictory),
+            (Key::U, Action::FocusFriend),
             (Key::Escape, Action::Escape),
+            (Key::ArrowLeft, Action::Back),
+            (Key::ArrowRight, Action::Forward),
+            (Key::ArrowUp, Action::First),
+            (Key::ArrowDown, Action::Live),
             (Key::Enter, Action::BackToLobby),
         ];
         let digits = [
@@ -621,6 +838,7 @@ impl App {
             Key::Num8,
             Key::Num9,
             Key::Num0,
+            Key::Minus,
         ];
         for (i, k) in digits.into_iter().enumerate() {
             bind.push((
@@ -706,12 +924,23 @@ impl App {
                     .id_salt("sidebar")
                     .auto_shrink(false)
                     .show(ui, |ui| {
-                        self.account_row(ui);
-                        match &self.play {
-                            Play::Local => self.local_panel(ui),
-                            Play::Seeking { .. } => self.seeking_panel(ui),
-                            Play::Online(_) => self.online_panel(ui),
-                        }
+                        // A little room so glyph edges aren't clipped on the left and
+                        // the scrollbar doesn't cover anything on the right.
+                        egui::Frame::new()
+                            .inner_margin(Margin {
+                                left: 2,
+                                right: 10,
+                                top: 0,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                self.account_row(ui);
+                                match &self.play {
+                                    Play::Local => self.local_panel(ui),
+                                    Play::Waiting { .. } => self.waiting_panel(ui),
+                                    Play::Online(_) => self.online_panel(ui),
+                                }
+                            });
                     });
             });
     }
@@ -780,11 +1009,17 @@ impl App {
         });
         ui.label(RichText::new(headline).font(medium(22.0)));
         ui.add_space(4.0);
-        egui::ScrollArea::vertical()
+        history_hint(ui, &pal, self.viewing, self.local.ply());
+        let current = self.viewing.unwrap_or(self.local.ply());
+        let viewed = egui::ScrollArea::vertical()
             .id_salt("local-moves")
             .max_height(120.0)
-            .stick_to_bottom(true)
-            .show(ui, |ui| move_list(ui, &pal, &self.local));
+            .stick_to_bottom(self.viewing.is_none())
+            .show(ui, |ui| move_list(ui, &pal, &self.local, current))
+            .inner;
+        if let Some(p) = viewed {
+            self.act(&ctx, Action::View(p));
+        }
         rule(ui);
 
         if self.username().is_none() {
@@ -829,7 +1064,41 @@ impl App {
         ui.add_space(4.0);
         ui.label(muted(
             &pal,
-            "Lichess pairs apps like this one at Rapid and Classical only. Blitz works against the computer.",
+            "Lichess pairs apps like this one at Rapid and Classical only. Blitz works against the computer and friends.",
+        ));
+        rule(ui);
+
+        section(ui, &pal, "Challenge a friend", |ui| kbd(ui, &pal, "U"));
+        ui.horizontal(|ui| {
+            // The field takes what the clock picker and Send button leave.
+            let width = (ui.available_width() - 160.0).max(80.0);
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.lobby.friend)
+                    .hint_text("Username")
+                    .desired_width(width)
+                    .char_limit(30),
+            );
+            if std::mem::take(&mut self.lobby.focus_friend) {
+                field.request_focus();
+            }
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            let (m, inc) = FRIEND_CLOCKS[self.lobby.friend_clock];
+            egui::ComboBox::from_id_salt("friend-clock")
+                .selected_text(RichText::new(format!("{m}+{inc}")).font(mono(13.0)))
+                .width(64.0)
+                .show_ui(ui, |ui| {
+                    for (i, &(m, inc)) in FRIEND_CLOCKS.iter().enumerate() {
+                        let text = format!("{m}+{inc}  {}", speed(m, inc));
+                        ui.selectable_value(&mut self.lobby.friend_clock, i, text);
+                    }
+                });
+            if button(ui, &pal, "Send", Some("↵"), Kind::Secondary).clicked() || enter {
+                self.act(&ctx, Action::ChallengeFriend);
+            }
+        });
+        ui.label(muted(
+            &pal,
+            "Rated follows Quick pairing; colour is random.",
         ));
         rule(ui);
 
@@ -871,19 +1140,24 @@ impl App {
         }
     }
 
-    fn seeking_panel(&mut self, ui: &mut egui::Ui) {
+    fn waiting_panel(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
         let ctx = ui.ctx().clone();
-        let Play::Seeking { label, ended_at } = &self.play else {
+        let Play::Waiting {
+            label,
+            ended_at,
+            challenge,
+        } = &self.play
+        else {
             return;
         };
-        section(ui, &pal, "Quick pairing", |_| {});
-        let text = if ended_at.is_some() {
-            "Starting game"
-        } else {
-            "Finding an opponent"
+        let (title, text) = match (challenge, ended_at) {
+            (_, Some(_)) => ("Starting", "Starting game".to_string()),
+            (Some((to, _)), None) => ("Challenge", format!("Waiting for {to} to accept")),
+            (None, None) => ("Quick pairing", "Finding an opponent".to_string()),
         };
-        waiting(ui, text);
+        section(ui, &pal, title, |_| {});
+        waiting(ui, &text);
         ui.label(
             RichText::new(label.as_str())
                 .font(mono(12.5))
@@ -929,18 +1203,38 @@ impl App {
                 });
             });
         }
-        if let Some(secs) = g.opponent_gone {
-            ui.label(muted(
-                &pal,
-                format!("Opponent left. You can claim victory in {secs}s on lichess.org."),
-            ));
+        if let Some(at) = g.opponent_gone.filter(|_| !g.is_over()) {
+            let left = at.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                ui.horizontal(|ui| {
+                    ui.label(muted(&pal, "Your opponent left."));
+                    if button(ui, &pal, "Claim victory", Some("V"), Kind::Primary).clicked() {
+                        action = Some(Action::ClaimVictory);
+                    }
+                });
+            } else {
+                ui.label(muted(
+                    &pal,
+                    format!(
+                        "Opponent left. You can claim victory in {}s.",
+                        left.as_secs() + 1
+                    ),
+                ));
+                ui.ctx().request_repaint_after(Duration::from_millis(250));
+            }
         }
         ui.add_space(6.0);
-        egui::ScrollArea::vertical()
+        history_hint(ui, &pal, self.viewing, g.game.ply());
+        let current = self.viewing.unwrap_or(g.game.ply());
+        let viewed = egui::ScrollArea::vertical()
             .id_salt("online-moves")
             .max_height((ui.available_height() - 150.0).max(60.0))
-            .stick_to_bottom(true)
-            .show(ui, |ui| move_list(ui, &pal, &g.game));
+            .stick_to_bottom(self.viewing.is_none())
+            .show(ui, |ui| move_list(ui, &pal, &g.game, current))
+            .inner;
+        if let Some(p) = viewed {
+            action = Some(Action::View(p));
+        }
         ui.add_space(6.0);
         player_card(ui, &pal, g, g.me, now);
         rule(ui);
@@ -949,7 +1243,10 @@ impl App {
             ui.label(RichText::new(g.result()).font(medium(18.0)));
             ui.add_space(8.0);
             if button(ui, &pal, "Back to lobby", Some("↵"), Kind::Primary).clicked() {
-                self.act(&ctx, Action::BackToLobby);
+                action = Some(Action::BackToLobby);
+            }
+            if let Some(a) = action {
+                self.act(&ctx, a);
             }
             return;
         }
@@ -993,6 +1290,7 @@ impl App {
         let field = ui.max_rect();
         style::hatch(ui.painter(), field, pal.line);
         self.show_sidebar_hint(ui);
+        self.incoming_card(ui);
 
         // Just enough room for the frame and its crop-mark overshoot.
         let area = field.shrink(FRAME + style::CROP + 2.0);
@@ -1001,10 +1299,11 @@ impl App {
         style::crop_frame(ui.painter(), card, pal.line.gamma_multiply(1.6).to_opaque());
 
         let movable = match &self.play {
-            _ if self.promoting.is_some() => None,
+            _ if self.promoting.is_some() || self.viewing.is_some() => None,
             Play::Local => (self.local.outcome() == Outcome::Unknown).then(|| self.local.turn()),
-            Play::Seeking { .. } => None,
-            Play::Online(g) => g.my_turn().then_some(g.me),
+            Play::Waiting { .. } => None,
+            // Always our side in a live game: on the opponent's turn it's a premove.
+            Play::Online(g) => (!g.is_over()).then_some(g.me),
         };
         let look = Look {
             theme: &self.theme,
@@ -1015,10 +1314,13 @@ impl App {
                 .map_or(&self.builtin, |(_, s)| s),
             board: self.assets.board.as_ref().map(|(_, b)| b),
         };
-        let game = match &self.play {
+        let live = match &self.play {
             Play::Online(g) => &g.game,
             _ => &self.local,
         };
+        // Looking back: show the position then (a rebuilt copy; cheap).
+        let past = self.viewing.map(|p| live.at(p));
+        let game = past.as_ref().unwrap_or(live);
         let builder = egui::UiBuilder::new().max_rect(area);
         let intent = ui
             .scope_builder(builder, |ui| self.board.show(ui, game, &look, movable))
@@ -1029,6 +1331,66 @@ impl App {
             } else {
                 self.play_move(i.from, i.to, None, !i.dragged, now);
             }
+        }
+    }
+
+    /// The oldest challenge to us, as a card over the board: Y accepts, Esc declines.
+    fn incoming_card(&mut self, ui: &mut egui::Ui) {
+        if !self.incoming_shown() {
+            return;
+        }
+        let pal = self.pal;
+        let ctx = ui.ctx().clone();
+        let ch = &self.incoming[0];
+        let who = match (&ch.challenger.title, ch.challenger.rating) {
+            (Some(t), Some(r)) => format!("{t} {} ({r})", ch.challenger.name),
+            (None, Some(r)) => format!("{} ({r})", ch.challenger.name),
+            (Some(t), None) => format!("{t} {}", ch.challenger.name),
+            (None, None) => ch.challenger.name.clone(),
+        };
+        let clock = match ch.time_control {
+            caturankam_lichess::TimeControl::Clock { limit, increment } => {
+                format!("{}+{increment}", limit / 60)
+            }
+            _ => String::new(),
+        };
+        let kind = if ch.rated { "rated" } else { "casual" };
+        let more = self.incoming.len() - 1;
+        let mut answer = None;
+        egui::Area::new("incoming".into())
+            .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 16.0))
+            .show(&ctx, |ui| {
+                egui::Frame::new()
+                    .fill(pal.surface)
+                    .stroke(Stroke::new(1.0, pal.line))
+                    .corner_radius(3)
+                    .inner_margin(Margin::same(14))
+                    .shadow(egui::Shadow {
+                        offset: [0, 4],
+                        blur: 16,
+                        spread: 0,
+                        color: Color32::from_black_alpha(30),
+                    })
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(format!("{who} challenges you")).font(medium(14.0)));
+                        let detail = format!("{clock} {} · {kind}", ch.speed);
+                        ui.label(RichText::new(detail).font(mono(12.0)).color(pal.muted));
+                        if more > 0 {
+                            ui.label(muted(&pal, format!("+{more} more waiting")));
+                        }
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if button(ui, &pal, "Accept", Some("Y"), Kind::Primary).clicked() {
+                                answer = Some(Action::Accept);
+                            }
+                            if button(ui, &pal, "Decline", Some("esc"), Kind::Secondary).clicked() {
+                                answer = Some(Action::Escape);
+                            }
+                        });
+                    });
+            });
+        if let Some(a) = answer {
+            self.act(&ctx, a);
         }
     }
 
@@ -1230,6 +1592,7 @@ impl eframe::App for App {
                 board: self.settings.board.clone(),
                 sidebar_hidden: !self.sidebar_visible(),
                 dark: self.settings.dark,
+                muted: self.settings.muted,
             });
         }
         self.keys(&ctx);
@@ -1353,16 +1716,21 @@ fn game_title(g: &OnlineGame, now: Instant) -> String {
         title = format!("{title}   ·   {}", g.result());
     } else if g.opponent_offers_draw {
         title.push_str("   ·   Draw offered: Y accept, Esc decline");
+    } else if g.can_claim_victory() {
+        title.push_str("   ·   Opponent left: V claims victory");
     }
     title
 }
 
-fn move_list(ui: &mut egui::Ui, pal: &Pal, game: &Game) {
+/// The moves in SAN, two per row. The move leading to `current` (a ply) is
+/// highlighted; clicking a move returns the ply to view.
+fn move_list(ui: &mut egui::Ui, pal: &Pal, game: &Game, current: usize) -> Option<usize> {
     let moves = game.san_moves();
     if moves.is_empty() {
         ui.label(muted(pal, "No moves yet"));
-        return;
+        return None;
     }
+    let mut clicked = None;
     egui::Grid::new(ui.next_auto_id())
         .num_columns(3)
         .spacing([18.0, 5.0])
@@ -1373,12 +1741,43 @@ fn move_list(ui: &mut egui::Ui, pal: &Pal, game: &Game) {
                         .font(mono(12.5))
                         .color(pal.muted),
                 );
-                for san in pair {
-                    ui.label(RichText::new(san).font(mono(13.0)));
+                for (i, san) in pair.iter().enumerate() {
+                    let ply = n * 2 + i + 1;
+                    let mut text = RichText::new(san).font(mono(13.0));
+                    if ply == current {
+                        text = text
+                            .background_color(pal.accent)
+                            .color(style::ink_on(pal.accent));
+                    }
+                    let label = egui::Label::new(text).sense(egui::Sense::click());
+                    if ui
+                        .add(label)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        clicked = Some(ply);
+                    }
                 }
                 ui.end_row();
             }
         });
+    clicked
+}
+
+/// "Viewing move 12 of 30" with the keys to move about, while looking back.
+fn history_hint(ui: &mut egui::Ui, pal: &Pal, viewing: Option<usize>, ply: usize) {
+    if let Some(v) = viewing {
+        ui.horizontal(|ui| {
+            ui.label(muted(pal, format!("Viewing move {v} of {ply}")));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(muted(pal, "live"));
+                kbd(ui, pal, "↓");
+                ui.label(muted(pal, "step"));
+                kbd(ui, pal, "→");
+                kbd(ui, pal, "←");
+            });
+        });
+    }
 }
 
 /// A random index in `0..n` other than `current` (when there's a choice).

@@ -42,9 +42,13 @@ Version 1, in the **Original** mode. Zen, Chaos and Ancient modes come later.
 
 - **Log in with Lichess:** OAuth with PKCE in your browser. The token stays in the macOS
   Keychain, never on disk.
-- **Play online:** Rapid and Classical quick pairing, or the Lichess computer at levels
-  1–8 (Blitz too). Clocks, draw offers, resign and abort. It reconnects if the connection
-  drops.
+- **Play online:** Rapid and Classical quick pairing, the Lichess computer at levels
+  1–8, or challenge a friend (Blitz works with both). Accept challenges from others,
+  premove, offer draws, resign, abort, and claim victory if your opponent leaves. It
+  reconnects if the connection drops.
+- **Step through any game** with the arrow keys, or click a move.
+- **Sounds** for moves, captures, check, and the start and end of a game. They're made in
+  code, so there's nothing to download.
 - **Every Lichess piece set and board** (41 and 25), downloaded only when you pick one.
 - **A Mac app:** native menu bar, light and dark appearance, a collapsible sidebar, and a
   shortcut for every action.
@@ -56,10 +60,16 @@ Every action has a single key, shown on its button. Menu items also have ⌘ sho
 
 | Where | Keys |
 |---|---|
-| Anywhere | **F** flip · **S** sidebar · **T** light/dark · **R** random pieces and board · **L** log in · **N** new local game |
-| Lobby | **1–5** quick pairing · **6–0** play the computer · **[ ]** computer level · **C** colour |
-| In a game | **A** abort · **X** resign (press twice) · **O** offer draw · **Y** accept draw · **Esc** decline or cancel · **↵** back to lobby |
+| Anywhere | **F** flip · **S** sidebar · **T** light/dark · **M** sound · **R** random pieces and board · **L** log in · **N** new local game |
+| Moves | **← →** step back and forward · **↑** start · **↓** back to live |
+| Lobby | **1–5** quick pairing · **6–0, -** play the computer · **[ ]** computer level · **C** colour · **U** challenge a friend |
+| Challenges | **Y** accept · **Esc** decline (or withdraw yours) |
+| In a game | **A** abort · **X** resign (press twice) · **O** offer draw · **Y** accept draw · **V** claim victory · **Esc** decline, cancel, or drop a premove · **↵** back to lobby |
 | Promotion | **Q R B N** |
+
+**Premoves:** during your opponent's turn, make your move as usual. It's queued (shown
+in blue) and played the instant their move lands, if it's still legal. Right-click or
+**Esc** drops it.
 
 With the sidebar hidden, the window title shows both players and their clocks.
 
@@ -128,14 +138,14 @@ quits.
 ## To do
 
 **Play**
-- [ ] Premoves
-- [ ] Sounds (move, capture, check, game start/end), lazy-loaded
-- [ ] Challenge a friend by username (Blitz is allowed in direct challenges)
-- [ ] Accept incoming challenges
-- [ ] Correspondence games
-- [ ] Claim victory when the opponent leaves (currently links to lichess.org)
-- [ ] Step back through the move list during and after a game
-- [ ] Bring back 5+0 against the computer (dropped to fit keys 6–0)
+- [x] Premoves
+- [x] Sounds (move, capture, check, game start/end), lazy-loaded
+- [x] Challenge a friend by username (Blitz is allowed in direct challenges)
+- [x] Accept incoming challenges
+- [ ] Correspondence games (several games at once, over days)
+- [x] Claim victory when the opponent leaves
+- [x] Step back through the move list during and after a game
+- [x] 5+0 against the computer
 
 **Modes** (the point of the project)
 - [ ] Theme system: every visual and sound from a theme pack, loaded from disk

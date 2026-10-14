@@ -34,7 +34,12 @@ struct Anim {
 #[derive(Default)]
 pub struct BoardView {
     pub flipped: bool,
+    /// A move queued during the opponent's turn, played the instant it's
+    /// ours (if still legal then).
+    pub premove: Option<(Square, Square)>,
     selected: Option<Square>,
+    /// The side that may pick up pieces this frame (for drawing targets).
+    side: Option<Color>,
     dragging: Option<Square>,
     anim: Option<Anim>,
 }
@@ -72,8 +77,13 @@ impl BoardView {
             flipped: self.flipped,
         };
 
-        // Only the side allowed to move right now can be picked up.
-        let movable = movable.filter(|&c| c == game.turn());
+        // `movable` may be the side not to move: then a finished move becomes
+        // a premove instead of an intent. Right-click cancels a premove.
+        if resp.secondary_clicked() {
+            self.premove = None;
+            self.selected = None;
+        }
+        self.side = movable;
         let intent = if let Some(side) = movable {
             self.handle_input(&resp, &geo, game, side)
         } else {
@@ -110,6 +120,17 @@ impl BoardView {
         let pos = resp.interact_pointer_pos()?;
         let sq = geo.square_at(pos);
         let own = |s: Square| game.board().piece_at(s).is_some_and(|p| p.color == side);
+        let premoving = side != game.turn();
+        let targets = |from: Square| targets(game, side, from);
+        // A finished move: played now, or queued as the premove.
+        let mut finish = |from: Square, to: Square, dragged: bool| {
+            if premoving {
+                self.premove = Some((from, to));
+                None
+            } else {
+                Some(Intent { from, to, dragged })
+            }
+        };
 
         if resp.drag_started() {
             self.dragging = sq.filter(|&s| own(s));
@@ -124,24 +145,16 @@ impl BoardView {
                 return None; // dropped back: keep it selected for click-to-move
             }
             self.selected = None;
-            return game.targets(from).contains(&to).then_some(Intent {
-                from,
-                to,
-                dragged: true,
-            });
+            if !targets(from).contains(&to) {
+                return None;
+            }
+            return finish(from, to, true);
         }
         if resp.clicked() {
             let sq = sq?;
-            if let Some(from) = self
-                .selected
-                .filter(|&from| game.targets(from).contains(&sq))
-            {
+            if let Some(from) = self.selected.filter(|&from| targets(from).contains(&sq)) {
                 self.selected = None;
-                return Some(Intent {
-                    from,
-                    to: sq,
-                    dragged: false,
-                });
+                return finish(from, sq, false);
             }
             self.selected = (own(sq) && self.selected != Some(sq)).then_some(sq);
         }
@@ -178,6 +191,9 @@ impl BoardView {
             if self.selected == Some(sq) {
                 p.rect_filled(r, 0.0, rgba(b.highlight, 190));
             }
+            if self.premove.is_some_and(|(f, t)| sq == f || sq == t) {
+                p.rect_filled(r, 0.0, PREMOVE);
+            }
             if b.coordinates == Coordinates::Subtle {
                 // Board images don't tell us their colours: use contrast ink instead.
                 let ink = match (look.board, is_dark) {
@@ -202,13 +218,13 @@ impl BoardView {
         }
 
         // Legal targets for the selected piece; the square under a drag is shaded.
-        if let Some(from) = self.selected {
+        if let (Some(from), Some(side)) = (self.selected, self.side) {
             let dot = Color32::from_black_alpha(55);
             let hover = self
                 .dragging
                 .and(pointer)
                 .and_then(|pos| geo.square_at(pos));
-            for to in game.targets(from) {
+            for to in targets(game, side, from) {
                 let r = geo.square_rect(to);
                 if hover == Some(to) {
                     p.rect_filled(r, 0.0, Color32::from_black_alpha(35));
@@ -281,6 +297,19 @@ pub fn board_rect(area: Rect) -> Rect {
     let side = (area.width().min(area.height()) / 8.0).floor() * 8.0;
     let min = (area.center() - Vec2::splat(side / 2.0)).round();
     Rect::from_min_size(min, Vec2::splat(side))
+}
+
+/// Premove squares: a cool tint, distinct from the last-move highlight.
+const PREMOVE: Color32 = Color32::from_rgba_premultiplied(40, 70, 120, 110);
+
+/// Where `side`'s piece on `from` can go: legal moves on its turn, the
+/// movement pattern (for a premove) otherwise.
+fn targets(game: &Game, side: Color, from: Square) -> Vec<Square> {
+    if side == game.turn() {
+        game.targets(from)
+    } else {
+        game.premove_targets(from)
+    }
 }
 
 /// Maps squares to screen space. White is at the bottom unless flipped.

@@ -21,8 +21,8 @@ pub struct OnlineGame {
     pub status: String,
     pub winner: Option<Color>,
     pub opponent_offers_draw: bool,
-    /// Seconds until we may claim victory, when the opponent left.
-    pub opponent_gone: Option<u32>,
+    /// When we may claim victory, if the opponent has left.
+    pub opponent_gone: Option<Instant>,
 }
 
 impl OnlineGame {
@@ -80,6 +80,11 @@ impl OnlineGame {
 
     pub fn is_over(&self) -> bool {
         !matches!(self.status.as_str(), "created" | "started")
+    }
+
+    /// The opponent left and the wait Lichess sets is over.
+    pub fn can_claim_victory(&self) -> bool {
+        !self.is_over() && self.opponent_gone.is_some_and(|at| Instant::now() >= at)
     }
 
     pub fn my_turn(&self) -> bool {
@@ -224,6 +229,18 @@ mod tests {
         assert_eq!(g.result(), "Resignation");
         assert_eq!(player_label(&g.black), "Stockfish level 3");
         assert_eq!(player_label(&g.white), "Me (1500)");
+    }
+
+    #[test]
+    fn claim_victory_only_after_the_wait() {
+        let mut g = OnlineGame::new(full("e2e4 e7e5"), "me").unwrap();
+        assert!(!g.can_claim_victory());
+        g.opponent_gone = Some(Instant::now() + Duration::from_secs(30));
+        assert!(!g.can_claim_victory()); // still waiting
+        g.opponent_gone = Some(Instant::now() - Duration::from_secs(1));
+        assert!(g.can_claim_victory());
+        g.update(&state("e2e4 e7e5", "resign")).unwrap();
+        assert!(!g.can_claim_victory()); // the game is over
     }
 
     #[test]

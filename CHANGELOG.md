@@ -17,6 +17,13 @@ The first release: a native Mac chess client for Lichess, in the **Original** mo
 - **Online play:** Rapid and Classical quick pairing (rated or casual), and the Lichess
   computer at levels 1–8 including Blitz. Live clocks, draw offers, resign and abort,
   automatic reconnection, and resuming a running game.
+- **Challenges:** challenge a friend by username (Blitz to Classical), and accept or
+  decline challenges sent to you.
+- **Premoves**, played the instant the opponent's move lands.
+- **Claim victory** when your opponent has left the game.
+- **Step through a game's moves** with the arrow keys or by clicking a move.
+- **Sounds** for moves, captures, check, and game start and end, synthesised in code.
+  **M** mutes.
 - **Lichess's 41 piece sets and 25 boards**, downloaded only when picked and cached.
   Your Lichess choices are adopted on login. Randomize with **R**.
 - **A Mac app:** native menu bar, light and dark appearance, a collapsible sidebar, and

@@ -12,6 +12,7 @@ repository = "https://github.com/deepakvettickal/caturankam"
 caturankam-core = { path = "crates/core" }
 caturankam-theme = { path = "crates/theme" }
 eframe = "0.36"
+egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 serde = { version = "1", features = ["derive"] }
 shakmaty = "0.30"
 thiserror = "2"

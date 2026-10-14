@@ -2,8 +2,12 @@
 //! input into move intents. It never mutates the game itself.
 
 use caturankam_core::{Color, File, Game, MoveEvent, Piece, Rank, Role, Square};
-use caturankam_theme::{Coordinates, Rgb, Theme};
-use eframe::egui::{self, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Stroke, Vec2};
+use caturankam_theme::{Coordinates, PIECES, Rgb, Theme};
+use eframe::egui::{
+    self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Sense, Shadow, Stroke, Vec2,
+};
+
+const CORNER: u8 = 6;
 
 /// A move the user asked for. The app decides whether to play it.
 pub struct Intent {
@@ -55,10 +59,10 @@ impl BoardView {
         interactive: bool,
     ) -> Option<Intent> {
         let avail = ui.available_rect_before_wrap();
-        let rect = Rect::from_center_size(
-            avail.center(),
-            Vec2::splat(avail.width().min(avail.height())),
-        );
+        // Whole points per square keeps square edges and piece rasters crisp.
+        let side = (avail.width().min(avail.height()) / 8.0).floor() * 8.0;
+        let min = (avail.center() - Vec2::splat(side / 2.0)).round();
+        let rect = Rect::from_min_size(min, Vec2::splat(side));
         let resp = ui.allocate_rect(rect, Sense::click_and_drag());
         let geo = Geometry {
             rect,
@@ -86,7 +90,7 @@ impl BoardView {
         let pointer = resp
             .interact_pointer_pos()
             .or(ui.input(|i| i.pointer.latest_pos()));
-        self.paint(ui.painter(), &geo, game, theme, anim_t, pointer);
+        self.paint(ui, &geo, game, theme, anim_t, pointer);
         intent
     }
 
@@ -143,79 +147,77 @@ impl BoardView {
 
     fn paint(
         &self,
-        p: &Painter,
+        ui: &egui::Ui,
         geo: &Geometry,
         game: &Game,
         theme: &Theme,
         anim_t: Option<f32>,
         pointer: Option<Pos2>,
     ) {
+        let p = ui.painter();
         let b = &theme.board;
-        let highlight = rgba(b.highlight, 140);
         let size = geo.square_size();
+
+        let shadow = Shadow {
+            offset: [0, 8],
+            blur: 28,
+            spread: 0,
+            color: Color32::from_black_alpha(140),
+        };
+        p.add(shadow.as_shape(geo.rect, CORNER));
 
         for sq in Square::ALL {
             let r = geo.square_rect(sq);
-            let is_dark = (u32::from(sq.file()) + u32::from(sq.rank())) % 2 == 0;
-            p.rect_filled(r, 0.0, rgb(if is_dark { b.dark } else { b.light }));
+            let round = geo.corner_radius(sq);
+            let is_dark = (u32::from(sq.file()) + u32::from(sq.rank())).is_multiple_of(2);
+            p.rect_filled(r, round, rgb(if is_dark { b.dark } else { b.light }));
 
-            if self.selected == Some(sq)
-                || game.last_move().is_some_and(|(f, t)| sq == f || sq == t)
-            {
-                p.rect_filled(r, 0.0, highlight);
+            if game.last_move().is_some_and(|(f, t)| sq == f || sq == t) {
+                p.rect_filled(r, round, rgba(b.highlight, 120));
+            }
+            if self.selected == Some(sq) {
+                p.rect_filled(r, round, rgba(b.highlight, 190));
             }
             if b.coordinates == Coordinates::Subtle {
-                let ink = rgb(if is_dark { b.light } else { b.dark });
-                let font = FontId::proportional(size * 0.16);
-                let pad = size * 0.06;
-                if geo.view_row(sq) == 7 {
-                    p.text(
-                        r.right_bottom() - Vec2::splat(pad),
-                        Align2::RIGHT_BOTTOM,
-                        sq.file().char(),
-                        font.clone(),
-                        ink,
-                    );
-                }
-                if geo.view_col(sq) == 0 {
-                    p.text(
-                        r.left_top() + Vec2::splat(pad),
-                        Align2::LEFT_TOP,
-                        sq.rank().char(),
-                        font,
-                        ink,
-                    );
-                }
+                paint_coordinates(p, geo, sq, rgb(if is_dark { b.light } else { b.dark }));
             }
         }
 
         if game.is_check()
             && let Some(king) = game.board().king_of(game.turn())
         {
-            p.circle_filled(
-                geo.square_rect(king).center(),
-                size * 0.45,
-                Color32::from_rgba_unmultiplied(220, 40, 40, 110),
-            );
+            // A soft red glow: stacked translucent discs fake a radial gradient.
+            let c = geo.square_rect(king).center();
+            for i in 1..=5 {
+                let radius = size * (0.18 + 0.065 * i as f32);
+                p.circle_filled(c, radius, Color32::from_rgba_unmultiplied(230, 30, 30, 34));
+            }
+        }
+
+        // Legal targets for the selected piece; the square under a drag is shaded.
+        if let Some(from) = self.selected {
+            let dot = Color32::from_black_alpha(55);
+            let hover = self
+                .dragging
+                .and(pointer)
+                .and_then(|pos| geo.square_at(pos));
+            for to in game.targets(from) {
+                let r = geo.square_rect(to);
+                if hover == Some(to) {
+                    p.rect_filled(r, geo.corner_radius(to), Color32::from_black_alpha(35));
+                } else if game.board().piece_at(to).is_some() {
+                    p.circle_stroke(r.center(), size * 0.46, Stroke::new(size * 0.06, dot));
+                } else {
+                    p.circle_filled(r.center(), size * 0.14, dot);
+                }
+            }
         }
 
         let anim = self.anim.as_ref().zip(anim_t);
         for (sq, piece) in game.board().clone() {
             let hidden = self.dragging == Some(sq) || anim.is_some_and(|(a, _)| a.to == sq);
             if !hidden {
-                draw_piece(p, geo.square_rect(sq).center(), size, piece);
-            }
-        }
-
-        if let Some(from) = self.selected {
-            for to in game.targets(from) {
-                let c = geo.square_rect(to).center();
-                let dot = Color32::from_black_alpha(60);
-                if game.board().piece_at(to).is_some() {
-                    p.circle_stroke(c, size * 0.46, Stroke::new(size * 0.07, dot));
-                } else {
-                    p.circle_filled(c, size * 0.15, dot);
-                }
+                draw_piece(ui, theme, geo.square_rect(sq).center(), size, piece);
             }
         }
 
@@ -223,13 +225,46 @@ impl BoardView {
             let eased = -((std::f32::consts::PI * t).cos() - 1.0) / 2.0; // ease-in-out sine
             let from = geo.square_rect(a.from).center();
             let to = geo.square_rect(a.to).center();
-            draw_piece(p, from + (to - from) * eased, size, a.piece);
+            draw_piece(ui, theme, from + (to - from) * eased, size, a.piece);
         }
         if let (Some(sq), Some(pos)) = (self.dragging, pointer)
             && let Some(piece) = game.board().piece_at(sq)
         {
-            draw_piece(p, pos, size * 1.1, piece);
+            // A small shadow under the lifted piece.
+            let lift = Shadow {
+                offset: [0, 4],
+                blur: 14,
+                spread: 0,
+                color: Color32::from_black_alpha(110),
+            };
+            let footprint = Rect::from_center_size(
+                pos + Vec2::new(0.0, size * 0.32),
+                Vec2::new(size * 0.55, size * 0.12),
+            );
+            p.add(lift.as_shape(footprint, u8::MAX));
+            draw_piece(ui, theme, pos, size, piece);
         }
+    }
+}
+
+fn paint_coordinates(p: &Painter, geo: &Geometry, sq: Square, ink: Color32) {
+    let r = geo.square_rect(sq);
+    let size = geo.square_size();
+    let font = FontId::proportional((size * 0.17).max(9.0));
+    let pad = size * 0.07;
+    if geo.view_row(sq) == 7 {
+        let pos = r.right_bottom() - Vec2::new(pad, pad * 0.6);
+        p.text(
+            pos,
+            Align2::RIGHT_BOTTOM,
+            sq.file().char(),
+            font.clone(),
+            ink,
+        );
+    }
+    if geo.view_col(sq) == 0 {
+        let pos = r.left_top() + Vec2::new(pad * 0.8, pad * 0.5);
+        p.text(pos, Align2::LEFT_TOP, sq.rank().char(), font, ink);
     }
 }
 
@@ -260,6 +295,23 @@ impl Geometry {
         Rect::from_min_size(min, Vec2::splat(s))
     }
 
+    /// Rounds only the board's four outer corners.
+    fn corner_radius(&self, sq: Square) -> CornerRadius {
+        let at = |c, r| {
+            if (self.view_col(sq), self.view_row(sq)) == (c, r) {
+                CORNER
+            } else {
+                0
+            }
+        };
+        CornerRadius {
+            nw: at(0, 0),
+            ne: at(7, 0),
+            sw: at(0, 7),
+            se: at(7, 7),
+        }
+    }
+
     fn square_at(&self, pos: Pos2) -> Option<Square> {
         if !self.rect.contains(pos) {
             return None;
@@ -275,36 +327,28 @@ impl Geometry {
     }
 }
 
-/// Placeholder pieces drawn in code until real art exists: a disc with the
-/// piece letter. Crude, but legible at any size.
-fn draw_piece(p: &Painter, center: Pos2, size: f32, piece: Piece) {
-    let (fill, ink) = match piece.color {
-        Color::White => (
-            Color32::from_rgb(250, 250, 250),
-            Color32::from_rgb(30, 30, 30),
-        ),
-        Color::Black => (
-            Color32::from_rgb(35, 35, 35),
-            Color32::from_rgb(240, 240, 240),
-        ),
-    };
-    let radius = if piece.role == Role::Pawn {
-        size * 0.3
-    } else {
-        size * 0.38
-    };
-    p.circle(center, radius, fill, Stroke::new(size * 0.03, ink));
-    let letter = piece.role.upper_char().to_string();
-    p.text(
-        center,
-        Align2::CENTER_CENTER,
-        letter,
-        FontId::proportional(radius * 1.15),
-        ink,
-    );
+/// Paints a piece from the theme's SVG set, centred on `center`.
+fn draw_piece(ui: &egui::Ui, theme: &Theme, center: Pos2, size: f32, piece: Piece) {
+    let rect = Rect::from_center_size(center, Vec2::splat(size));
+    piece_image(theme, piece).paint_at(ui, rect);
 }
 
-fn rgb(c: Rgb) -> Color32 {
+pub fn piece_image(theme: &Theme, piece: Piece) -> egui::Image<'static> {
+    let role = match piece.role {
+        Role::King => 0,
+        Role::Queen => 1,
+        Role::Rook => 2,
+        Role::Bishop => 3,
+        Role::Knight => 4,
+        Role::Pawn => 5,
+    };
+    let i = role + if piece.color == Color::White { 0 } else { 6 };
+    // The URI keys egui's raster cache, so it must be unique per theme and piece.
+    let uri = format!("bytes://{}/{}.svg", theme.id, PIECES[i]);
+    egui::Image::from_bytes(uri, theme.pieces[i])
+}
+
+pub fn rgb(c: Rgb) -> Color32 {
     let [r, g, b] = c.0;
     Color32::from_rgb(r, g, b)
 }
@@ -336,5 +380,7 @@ mod tests {
             Some(Square::A1)
         );
         assert_eq!(geo.square_at(Pos2::ZERO), None);
+        assert_eq!(geo.corner_radius(Square::A1).sw, CORNER);
+        assert_eq!(geo.corner_radius(Square::E4), CornerRadius::ZERO);
     }
 }

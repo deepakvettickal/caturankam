@@ -11,7 +11,7 @@ Caturankam for Lichess is an independent project, not an official Lichess app.
 ## Status
 
 Early draft: a local board in the **Original** mode. Play both sides with click or drag,
-with legal-move enforcement, move animation, promotion and board flip. Lichess login and
+with legal-move enforcement, move animation, promotion, board flip and a move list. Lichess login and
 online play come next; Zen, Chaos and Ancient modes after that.
 
 ## Run

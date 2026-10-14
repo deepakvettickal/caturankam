@@ -1,6 +1,6 @@
 //! Game model on top of shakmaty. No I/O, no UI.
 
-use shakmaty::{CastlingMode, Chess, Move, Position, fen::Fen};
+use shakmaty::{CastlingMode, Chess, Move, Position, fen::Fen, san::SanPlus};
 
 pub use shakmaty::{Board, Color, File, KnownOutcome, Outcome, Piece, Rank, Role, Square};
 
@@ -27,6 +27,8 @@ pub struct MoveEvent {
 pub struct Game {
     position: Chess,
     last_move: Option<(Square, Square)>,
+    /// Moves played so far, in SAN (e.g. `e4`, `Nxf7+`, `O-O`).
+    san: Vec<String>,
 }
 
 impl Game {
@@ -37,7 +39,7 @@ impl Game {
             .map_err(|e| Error::Fen(e.to_string()))?;
         Ok(Self {
             position,
-            last_move: None,
+            ..Self::default()
         })
     }
 
@@ -57,6 +59,10 @@ impl Game {
     /// 50-move rule are left to the server.
     pub fn outcome(&self) -> Outcome {
         self.position.outcome()
+    }
+
+    pub fn san_moves(&self) -> &[String] {
+        &self.san
     }
 
     pub fn last_move(&self) -> Option<(Square, Square)> {
@@ -90,7 +96,8 @@ impl Game {
         let m = self.find(from, to, promotion).ok_or(Error::IllegalMove)?;
         let piece = self.board().piece_at(from).ok_or(Error::IllegalMove)?;
         let to = landing(m);
-        self.position.play_unchecked(m);
+        let san = SanPlus::from_move_and_play_unchecked(&mut self.position, m);
+        self.san.push(san.to_string());
         self.last_move = Some((from, to));
         Ok(MoveEvent {
             from,
@@ -139,6 +146,7 @@ mod tests {
         let mut g = Game::from_fen(fen).unwrap();
         assert!(g.targets(E1).contains(&G1));
         assert_eq!(g.play(E1, G1, None).unwrap().to, G1);
+        assert_eq!(g.san_moves(), ["O-O"]);
         assert_eq!(g.board().piece_at(F1).map(|p| p.role), Some(Role::Rook));
 
         let mut g = Game::from_fen(fen).unwrap();
@@ -165,6 +173,7 @@ mod tests {
         }
         let ev = g.play(D8, H4, None).unwrap();
         assert!(ev.check && !ev.capture);
+        assert_eq!(g.san_moves(), ["f3", "e5", "g4", "Qh4#"]);
         assert_eq!(
             g.outcome(),
             Outcome::Known(KnownOutcome::Decisive {

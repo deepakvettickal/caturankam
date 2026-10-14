@@ -34,6 +34,8 @@ pub struct Theme {
     pub board: Board,
     pub animation: Animation,
     pub ui: Ui,
+    /// The same chrome for dark mode; themes without one stay light.
+    pub ui_dark: Option<Ui>,
     /// SVG bytes in [`PIECES`] order. Filled by the loader, not the manifest.
     // shortcut: built-in themes only; becomes owned bytes when themes load from disk.
     #[serde(skip)]

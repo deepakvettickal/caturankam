@@ -1,0 +1,12 @@
+# Original: Lichess as is. Clean, fast, familiar.
+name = "Original"
+id = "original"
+
+[board]
+light = "#F0D9B5"
+dark  = "#B58863"
+highlight = "#CDD26A"   # selected square and last move
+coordinates = "subtle"  # none | subtle
+
+[animation]
+move_ms = 200

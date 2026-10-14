@@ -1,0 +1,11 @@
+[package]
+name = "caturankam"
+description = "Super-lightweight native chess client for Lichess."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caturankam-core.workspace = true
+caturankam-theme.workspace = true
+eframe.workspace = true

@@ -1,0 +1,8 @@
+[package]
+name = "caturankam-lichess"
+description = "Lichess API client: auth, game streams, moves."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

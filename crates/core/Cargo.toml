@@ -1,0 +1,10 @@
+[package]
+name = "caturankam-core"
+description = "Game model on top of shakmaty. No I/O, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+shakmaty.workspace = true
+thiserror.workspace = true

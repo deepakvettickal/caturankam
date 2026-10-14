@@ -37,6 +37,11 @@ const HINT_FADE_SECS: f64 = 0.6;
 const FRAME: f32 = 3.0;
 
 fn main() -> eframe::Result {
+    // For packaging smoke tests: proves the bundled binary runs, without a window.
+    if std::env::args().any(|a| a == "--version") {
+        println!("caturankam {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let viewport = egui::ViewportBuilder::default()
         .with_title("Caturankam")
         .with_inner_size([1040.0, 760.0])

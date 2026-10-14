@@ -88,6 +88,13 @@ pub enum Action {
     /// Esc: decline a draw, cancel a seek or a pending resign.
     Escape,
     BackToLobby,
+    /// Step through the game's history: one move back or forward, to the
+    /// start, back to live, or to the position after a given ply.
+    Back,
+    Forward,
+    First,
+    Live,
+    View(usize),
 }
 
 enum Account {
@@ -140,6 +147,8 @@ struct App {
     sidebar_hidden_at: Option<f64>,
     /// The window title last sent, so it's only updated when it changes.
     title: String,
+    /// The ply being looked at while stepping through history; `None` is live.
+    viewing: Option<usize>,
 }
 
 impl App {
@@ -188,6 +197,7 @@ impl App {
             demo,
             sidebar_hidden_at: None,
             title: String::new(),
+            viewing: None,
         };
         if let Some(d) = &app.demo {
             if let Ok((game, _)) = Game::from_uci("startpos", &d.moves) {
@@ -361,6 +371,7 @@ impl App {
                         if !same {
                             // A new game: reset the board and face our side.
                             self.board.reset();
+                            self.viewing = None;
                             self.board.flipped = g.me == Color::Black;
                             self.promoting = None;
                             self.confirm_resign = false;
@@ -376,14 +387,25 @@ impl App {
                     return;
                 };
                 // Finish with `g` (a mutable borrow of `self.play`) before touching `self` again.
-                let (result, over) = (g.update(&st), g.is_over());
+                let ply = g.game.ply();
+                let result = g.update(&st);
+                let (over, my_turn, moved) = (g.is_over(), g.my_turn(), g.game.ply() != ply);
                 if over {
                     self.promoting = None;
+                    self.board.premove = None;
+                }
+                if moved {
+                    self.viewing = None; // a new move snaps back to the live position
                 }
                 match result {
                     Ok(Some(ev)) => self.board.animate(&ev, now),
                     Ok(None) => {}
                     Err(e) => self.notify(ctx, format!("Out of sync with Lichess: {e}")),
+                }
+                if my_turn && let Some((from, to)) = self.board.premove.take() {
+                    // Played at once, unanimated; dropped if it's no longer legal.
+                    let promo = self.game().is_promotion(from, to).then_some(Role::Queen);
+                    self.play_move(from, to, promo, false, now);
                 }
             }
             GameEvent::OpponentGone {
@@ -401,6 +423,7 @@ impl App {
     // ---- actions ----
 
     fn back_to_local(&mut self) {
+        self.viewing = None;
         self.play = Play::Local;
         self.board.reset();
         self.board.flipped = false;
@@ -435,6 +458,7 @@ impl App {
                 Err(_) => return, // only legal targets are offered, so this can't happen
             },
         };
+        self.viewing = None;
         if animate {
             self.board.animate(&ev, now);
         }
@@ -454,8 +478,20 @@ impl App {
             live.map_or((false, false), |g| (g.can_abort(), g.opponent_offers_draw));
         let live = live.is_some();
         match action {
+            Action::Back => {
+                let ply = self.game().ply();
+                self.viewing = Some(self.viewing.unwrap_or(ply).saturating_sub(1));
+            }
+            Action::Forward => {
+                let ply = self.game().ply();
+                self.viewing = self.viewing.map(|v| v + 1).filter(|&v| v < ply);
+            }
+            Action::First => self.viewing = (self.game().ply() > 0).then_some(0),
+            Action::Live => self.viewing = None,
+            Action::View(p) => self.viewing = (p < self.game().ply()).then_some(p),
             Action::NewGame => {
                 if matches!(self.play, Play::Local) {
+                    self.viewing = None;
                     self.local = Game::default();
                     self.board.reset();
                     self.promoting = None;
@@ -554,6 +590,7 @@ impl App {
                     Some(Side::Black) => None,
                 };
             }
+            Action::Escape if self.board.premove.is_some() => self.board.premove = None,
             Action::CancelSeek | Action::Escape if matches!(self.play, Play::Seeking { .. }) => {
                 if let Some(net) = &self.net {
                     net.send(Cmd::CancelSeek);
@@ -608,6 +645,10 @@ impl App {
             (Key::O, Action::OfferDraw),
             (Key::Y, Action::AnswerDraw(true)),
             (Key::Escape, Action::Escape),
+            (Key::ArrowLeft, Action::Back),
+            (Key::ArrowRight, Action::Forward),
+            (Key::ArrowUp, Action::First),
+            (Key::ArrowDown, Action::Live),
             (Key::Enter, Action::BackToLobby),
         ];
         let digits = [
@@ -781,11 +822,17 @@ impl App {
         });
         ui.label(RichText::new(headline).font(medium(22.0)));
         ui.add_space(4.0);
-        egui::ScrollArea::vertical()
+        history_hint(ui, &pal, self.viewing, self.local.ply());
+        let current = self.viewing.unwrap_or(self.local.ply());
+        let viewed = egui::ScrollArea::vertical()
             .id_salt("local-moves")
             .max_height(120.0)
-            .stick_to_bottom(true)
-            .show(ui, |ui| move_list(ui, &pal, &self.local));
+            .stick_to_bottom(self.viewing.is_none())
+            .show(ui, |ui| move_list(ui, &pal, &self.local, current))
+            .inner;
+        if let Some(p) = viewed {
+            self.act(&ctx, Action::View(p));
+        }
         rule(ui);
 
         if self.username().is_none() {
@@ -937,11 +984,17 @@ impl App {
             ));
         }
         ui.add_space(6.0);
-        egui::ScrollArea::vertical()
+        history_hint(ui, &pal, self.viewing, g.game.ply());
+        let current = self.viewing.unwrap_or(g.game.ply());
+        let viewed = egui::ScrollArea::vertical()
             .id_salt("online-moves")
             .max_height((ui.available_height() - 150.0).max(60.0))
-            .stick_to_bottom(true)
-            .show(ui, |ui| move_list(ui, &pal, &g.game));
+            .stick_to_bottom(self.viewing.is_none())
+            .show(ui, |ui| move_list(ui, &pal, &g.game, current))
+            .inner;
+        if let Some(p) = viewed {
+            action = Some(Action::View(p));
+        }
         ui.add_space(6.0);
         player_card(ui, &pal, g, g.me, now);
         rule(ui);
@@ -950,7 +1003,10 @@ impl App {
             ui.label(RichText::new(g.result()).font(medium(18.0)));
             ui.add_space(8.0);
             if button(ui, &pal, "Back to lobby", Some("↵"), Kind::Primary).clicked() {
-                self.act(&ctx, Action::BackToLobby);
+                action = Some(Action::BackToLobby);
+            }
+            if let Some(a) = action {
+                self.act(&ctx, a);
             }
             return;
         }
@@ -1002,10 +1058,11 @@ impl App {
         style::crop_frame(ui.painter(), card, pal.line.gamma_multiply(1.6).to_opaque());
 
         let movable = match &self.play {
-            _ if self.promoting.is_some() => None,
+            _ if self.promoting.is_some() || self.viewing.is_some() => None,
             Play::Local => (self.local.outcome() == Outcome::Unknown).then(|| self.local.turn()),
             Play::Seeking { .. } => None,
-            Play::Online(g) => g.my_turn().then_some(g.me),
+            // Always our side in a live game: on the opponent's turn it's a premove.
+            Play::Online(g) => (!g.is_over()).then_some(g.me),
         };
         let look = Look {
             theme: &self.theme,
@@ -1016,10 +1073,13 @@ impl App {
                 .map_or(&self.builtin, |(_, s)| s),
             board: self.assets.board.as_ref().map(|(_, b)| b),
         };
-        let game = match &self.play {
+        let live = match &self.play {
             Play::Online(g) => &g.game,
             _ => &self.local,
         };
+        // Looking back: show the position then (a rebuilt copy; cheap).
+        let past = self.viewing.map(|p| live.at(p));
+        let game = past.as_ref().unwrap_or(live);
         let builder = egui::UiBuilder::new().max_rect(area);
         let intent = ui
             .scope_builder(builder, |ui| self.board.show(ui, game, &look, movable))
@@ -1358,12 +1418,15 @@ fn game_title(g: &OnlineGame, now: Instant) -> String {
     title
 }
 
-fn move_list(ui: &mut egui::Ui, pal: &Pal, game: &Game) {
+/// The moves in SAN, two per row. The move leading to `current` (a ply) is
+/// highlighted; clicking a move returns the ply to view.
+fn move_list(ui: &mut egui::Ui, pal: &Pal, game: &Game, current: usize) -> Option<usize> {
     let moves = game.san_moves();
     if moves.is_empty() {
         ui.label(muted(pal, "No moves yet"));
-        return;
+        return None;
     }
+    let mut clicked = None;
     egui::Grid::new(ui.next_auto_id())
         .num_columns(3)
         .spacing([18.0, 5.0])
@@ -1374,12 +1437,43 @@ fn move_list(ui: &mut egui::Ui, pal: &Pal, game: &Game) {
                         .font(mono(12.5))
                         .color(pal.muted),
                 );
-                for san in pair {
-                    ui.label(RichText::new(san).font(mono(13.0)));
+                for (i, san) in pair.iter().enumerate() {
+                    let ply = n * 2 + i + 1;
+                    let mut text = RichText::new(san).font(mono(13.0));
+                    if ply == current {
+                        text = text
+                            .background_color(pal.accent)
+                            .color(style::ink_on(pal.accent));
+                    }
+                    let label = egui::Label::new(text).sense(egui::Sense::click());
+                    if ui
+                        .add(label)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        clicked = Some(ply);
+                    }
                 }
                 ui.end_row();
             }
         });
+    clicked
+}
+
+/// "Viewing move 12 of 30" with the keys to move about, while looking back.
+fn history_hint(ui: &mut egui::Ui, pal: &Pal, viewing: Option<usize>, ply: usize) {
+    if let Some(v) = viewing {
+        ui.horizontal(|ui| {
+            ui.label(muted(pal, format!("Viewing move {v} of {ply}")));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(muted(pal, "live"));
+                kbd(ui, pal, "↓");
+                ui.label(muted(pal, "step"));
+                kbd(ui, pal, "→");
+                kbd(ui, pal, "←");
+            });
+        });
+    }
 }
 
 /// A random index in `0..n` other than `current` (when there's a choice).

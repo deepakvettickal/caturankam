@@ -1,0 +1,22 @@
+name: Feature request
+description: An idea for Caturankam.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: The problem or wish, in your own words, not the solution yet.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could it work?
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Before you send
+      options:
+        - label: It keeps the app lightweight and lazy-loaded.
+        - label: It never helps during a live game (Lichess fair play).

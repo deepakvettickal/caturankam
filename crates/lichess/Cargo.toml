@@ -6,3 +6,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+base64.workspace = true          # PKCE challenge encoding
+getrandom.workspace = true       # PKCE verifier and OAuth state
+reqwest.workspace = true         # HTTPS + streamed NDJSON
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true            # PKCE S256
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "time", "macros"] }  # loopback redirect listener
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

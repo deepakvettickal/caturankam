@@ -2,6 +2,8 @@ mod assets;
 mod board;
 mod demo;
 #[cfg(target_os = "macos")]
+mod mac_crash_guard;
+#[cfg(target_os = "macos")]
 mod menu;
 mod net;
 mod online;
@@ -31,8 +33,6 @@ const NOTICE_SECS: f64 = 6.0;
 /// After hiding the sidebar, "Show sidebar [S]" stays this long, then fades.
 const HINT_SECS: f64 = 2.0;
 const HINT_FADE_SECS: f64 = 0.6;
-/// Height of the name-and-clock strips above and below the board in a game.
-const STRIP: f32 = 44.0;
 /// Space between the board and its crop frame.
 const FRAME: f32 = 3.0;
 
@@ -133,10 +133,15 @@ struct App {
     demo: Option<demo::Demo>,
     /// When the sidebar was last hidden, for the fading "Show sidebar" hint.
     sidebar_hidden_at: Option<f64>,
+    /// The window title last sent, so it's only updated when it changes.
+    title: String,
 }
 
 impl App {
     fn new(ctx: &egui::Context) -> Self {
+        // The window exists by now, so winit's view class can be patched.
+        #[cfg(target_os = "macos")]
+        mac_crash_guard::install();
         egui_extras::install_image_loaders(ctx);
         style::install_fonts(ctx);
         let theme = Theme::original();
@@ -175,6 +180,7 @@ impl App {
             draw_offered: false,
             demo,
             sidebar_hidden_at: None,
+            title: String::new(),
         };
         if let Some(d) = &app.demo
             && let Ok((game, _)) = Game::from_uci("startpos", &d.moves)
@@ -873,7 +879,7 @@ impl App {
         }
     }
 
-    /// Moves and game actions. Names and clocks are in the strips by the board.
+    /// Opponent's card at the top, moves, your card at the bottom, actions.
     fn online_panel(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
         let ctx = ui.ctx().clone();
@@ -886,17 +892,41 @@ impl App {
                     .color(pal.muted),
             );
         });
+        let now = Instant::now();
+        let them = if g.me == Color::White {
+            Color::Black
+        } else {
+            Color::White
+        };
+        player_card(ui, &pal, g, them, now);
+        let mut action = None;
+        if g.opponent_offers_draw && !g.is_over() {
+            ui.horizontal(|ui| {
+                ui.label(muted(&pal, "Draw offered"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, &pal, "Decline", Some("esc"), Kind::Secondary).clicked() {
+                        action = Some(Action::AnswerDraw(false));
+                    }
+                    if button(ui, &pal, "Accept", Some("Y"), Kind::Primary).clicked() {
+                        action = Some(Action::AnswerDraw(true));
+                    }
+                });
+            });
+        }
         if let Some(secs) = g.opponent_gone {
             ui.label(muted(
                 &pal,
                 format!("Opponent left. You can claim victory in {secs}s on lichess.org."),
             ));
         }
+        ui.add_space(6.0);
         egui::ScrollArea::vertical()
             .id_salt("online-moves")
-            .max_height((ui.available_height() - 110.0).max(80.0))
+            .max_height((ui.available_height() - 150.0).max(60.0))
             .stick_to_bottom(true)
             .show(ui, |ui| move_list(ui, &pal, &g.game));
+        ui.add_space(6.0);
+        player_card(ui, &pal, g, g.me, now);
         rule(ui);
 
         if g.is_over() {
@@ -908,7 +938,6 @@ impl App {
             return;
         }
         let can_abort = g.can_abort();
-        let mut action = None;
         ui.horizontal(|ui| {
             if can_abort {
                 if button(ui, &pal, "Abort", Some("A"), Kind::Secondary).clicked() {
@@ -941,26 +970,17 @@ impl App {
         }
     }
 
-    /// The board on a hatched field, inside a crop-mark frame, with name and
-    /// clock strips above and below it during a game.
+    /// The board on a hatched field, inside a crop-mark frame. It always gets
+    /// the full height: names and clocks live in the sidebar or window title.
     fn board_area(&mut self, ui: &mut egui::Ui, now: f64) {
         let pal = self.pal;
         let field = ui.max_rect();
         style::hatch(ui.painter(), field, pal.line);
         self.show_sidebar_hint(ui);
 
-        let online = self.online().is_some();
         // Just enough room for the frame and its crop-mark overshoot.
-        let pad = FRAME + style::CROP + 2.0;
-        let mut area = field.shrink(pad);
-        if online {
-            area = area.shrink2(Vec2::new(0.0, STRIP));
-        }
-        let rect = board::board_rect(area);
-        // The card: board plus strips, on paper, framed by crop marks.
-        let card = rect
-            .expand2(Vec2::new(0.0, if online { STRIP } else { 0.0 }))
-            .expand(FRAME);
+        let area = field.shrink(FRAME + style::CROP + 2.0);
+        let card = board::board_rect(area).expand(FRAME);
         ui.painter().rect_filled(card, 0.0, pal.bg);
         style::crop_frame(ui.painter(), card, pal.line.gamma_multiply(1.6).to_opaque());
 
@@ -987,7 +1007,6 @@ impl App {
         let intent = ui
             .scope_builder(builder, |ui| self.board.show(ui, game, &look, movable))
             .inner;
-        self.player_strips(ui, rect);
         if let Some(i) = intent {
             if self.game().is_promotion(i.from, i.to) {
                 self.promoting = Some((i.from, i.to));
@@ -1029,63 +1048,23 @@ impl App {
         }
     }
 
-    /// Name and clock above and below the board. The opponent's strip also
-    /// carries a draw offer, so it can't be missed with the sidebar hidden.
-    fn player_strips(&mut self, ui: &mut egui::Ui, board: egui::Rect) {
-        let pal = self.pal;
-        let Play::Online(g) = &self.play else { return };
+    /// The window title: "Caturankam", or, in a game with the sidebar hidden,
+    /// both players and clocks. Also keeps a running clock repainting.
+    fn update_title(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
-        // Follow the board: whoever's at the top of the board is at the top.
-        let (top, bottom) = if self.board.flipped {
-            (Color::White, Color::Black)
-        } else {
-            (Color::Black, Color::White)
-        };
-        let top_rect = egui::Rect::from_min_max(
-            egui::pos2(board.left(), board.top() - STRIP),
-            egui::pos2(board.right(), board.top() - 6.0),
-        );
-        let bottom_rect = egui::Rect::from_min_max(
-            egui::pos2(board.left(), board.bottom() + 6.0),
-            egui::pos2(board.right(), board.bottom() + STRIP),
-        );
-        let mut action = None;
-        for (c, rect) in [(top, top_rect), (bottom, bottom_rect)] {
-            let builder = egui::UiBuilder::new()
-                .max_rect(rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center));
-            ui.scope_builder(builder, |ui| {
-                let p = g.player(c);
-                let name = p.name.clone().unwrap_or_else(|| player_label(p));
-                ui.label(RichText::new(name).font(medium(14.0)));
-                if let Some(r) = p.rating.filter(|_| p.ai_level.is_none()) {
-                    ui.label(
-                        RichText::new(r.to_string())
-                            .font(mono(12.0))
-                            .color(pal.muted),
-                    );
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    clock(ui, &pal, g, c, now);
-                    if c != g.me && g.opponent_offers_draw && !g.is_over() {
-                        ui.add_space(6.0);
-                        if button(ui, &pal, "Decline", Some("esc"), Kind::Secondary).clicked() {
-                            action = Some(Action::AnswerDraw(false));
-                        }
-                        if button(ui, &pal, "Accept draw", Some("Y"), Kind::Primary).clicked() {
-                            action = Some(Action::AnswerDraw(true));
-                        }
-                    }
-                });
-            });
+        let mut title = String::from("Caturankam");
+        if let Some(g) = self.online() {
+            if g.ticking() {
+                let left = g.clock(g.game.turn(), now).unwrap_or_default();
+                ctx.request_repaint_after(next_tick(left));
+            }
+            if !self.sidebar_visible() {
+                title = game_title(g, now);
+            }
         }
-        if g.ticking() {
-            let left = g.clock(g.game.turn(), now).unwrap_or_default();
-            ui.ctx().request_repaint_after(next_tick(left));
-        }
-        if let Some(a) = action {
-            let ctx = ui.ctx().clone();
-            self.act(&ctx, a);
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
         }
     }
 
@@ -1249,6 +1228,7 @@ impl eframe::App for App {
             .frame(frame)
             .show(ui, |ui| self.board_area(ui, now));
 
+        self.update_title(&ctx);
         self.toast(&ctx);
         self.promotion_picker(&ctx, now);
         self.appearance_window(&ctx);
@@ -1289,31 +1269,76 @@ fn local_status(game: &Game) -> (String, &'static str) {
     }
 }
 
-/// A clock face in mono: dark while running, red in the last ten seconds.
-fn clock(ui: &mut egui::Ui, pal: &Pal, g: &OnlineGame, c: Color, now: Instant) {
-    let Some(left) = g.clock(c, now) else { return };
-    let running = g.ticking() && g.game.turn() == c;
-    let (fill, ink, border) = match (running, left.as_secs() < 10) {
-        (true, true) => (
-            Color32::from_rgb(190, 45, 35),
-            style::ink_on(Color32::from_rgb(190, 45, 35)),
-            Color32::from_rgb(190, 45, 35),
-        ),
-        (true, false) => (pal.primary, pal.on_primary, pal.primary),
-        _ => (pal.surface, pal.text, pal.line),
-    };
-    egui::Frame::new()
-        .fill(fill)
-        .stroke(Stroke::new(1.0, border))
-        .corner_radius(3)
-        .inner_margin(Margin::symmetric(10, 3))
-        .show(ui, |ui| {
+/// A player's name, rating and clock. The clock is dark while running, red in
+/// the last ten seconds.
+fn player_card(ui: &mut egui::Ui, pal: &Pal, g: &OnlineGame, c: Color, now: Instant) {
+    let p = g.player(c);
+    ui.horizontal(|ui| {
+        let name = p.name.clone().unwrap_or_else(|| player_label(p));
+        ui.label(RichText::new(name).font(medium(14.0)));
+        if let Some(r) = p.rating.filter(|_| p.ai_level.is_none()) {
             ui.label(
-                RichText::new(format_clock(left))
-                    .font(mono(20.0))
-                    .color(ink),
+                RichText::new(r.to_string())
+                    .font(mono(12.0))
+                    .color(pal.muted),
             );
+        }
+        let Some(left) = g.clock(c, now) else { return };
+        let running = g.ticking() && g.game.turn() == c;
+        let red = Color32::from_rgb(190, 45, 35);
+        let (fill, ink, border) = match (running, left.as_secs() < 10) {
+            (true, true) => (red, style::ink_on(red), red),
+            (true, false) => (pal.primary, pal.on_primary, pal.primary),
+            _ => (pal.surface, pal.text, pal.line),
+        };
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            egui::Frame::new()
+                .fill(fill)
+                .stroke(Stroke::new(1.0, border))
+                .corner_radius(3)
+                .inner_margin(Margin::symmetric(10, 3))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(format_clock(left))
+                            .font(mono(20.0))
+                            .color(ink),
+                    );
+                });
         });
+    });
+}
+
+/// "Stockfish level 3  2:58  ·  the_vetti 1225  ▸ 3:00": opponent first, the
+/// running clock marked, a pending draw offer appended.
+fn game_title(g: &OnlineGame, now: Instant) -> String {
+    let them = if g.me == Color::White {
+        Color::Black
+    } else {
+        Color::White
+    };
+    let side = |c: Color| {
+        let p = g.player(c);
+        let name = p.name.clone().unwrap_or_else(|| player_label(p));
+        let rating = p
+            .rating
+            .filter(|_| p.ai_level.is_none())
+            .map(|r| format!(" {r}"))
+            .unwrap_or_default();
+        let clock = g.clock(c, now).map(format_clock).unwrap_or_default();
+        let mark = if g.ticking() && g.game.turn() == c {
+            "▸ "
+        } else {
+            ""
+        };
+        format!("{name}{rating}  {mark}{clock}")
+    };
+    let mut title = format!("{}   ·   {}", side(them), side(g.me));
+    if g.is_over() {
+        title = format!("{title}   ·   {}", g.result());
+    } else if g.opponent_offers_draw {
+        title.push_str("   ·   Draw offered: Y accept, Esc decline");
+    }
+    title
 }
 
 fn move_list(ui: &mut egui::Ui, pal: &Pal, game: &Game) {
@@ -1369,6 +1394,19 @@ mod tests {
         }
         assert_eq!(pick_other(0, 1, 7), 0);
         assert_eq!(pick_other(0, 2, 99), 1);
+    }
+
+    #[test]
+    fn game_title_shows_both_players_and_marks_the_running_clock() {
+        let full = r#"{"id":"g","white":{"id":"me","name":"me","rating":1225},"black":{"aiLevel":3},
+            "initialFen":"startpos","clock":{"initial":180000,"increment":0},"rated":false,
+            "speed":"blitz","state":{"moves":"e2e4 e7e5","wtime":180500,"btime":178000,
+            "status":"started","bdraw":true}}"#;
+        let g = OnlineGame::new(serde_json::from_str(full).unwrap(), "me").unwrap();
+        assert_eq!(
+            game_title(&g, Instant::now()),
+            "Stockfish level 3  2:58   ·   me 1225  ▸ 3:00   ·   Draw offered: Y accept, Esc decline"
+        );
     }
 
     #[test]

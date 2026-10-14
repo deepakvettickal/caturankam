@@ -672,8 +672,12 @@ dependencies = [
  "dirs",
  "eframe",
  "egui_extras",
+ "image",
  "keyring",
+ "serde",
+ "serde_json",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -1167,6 +1171,7 @@ dependencies = [
  "ahash",
  "egui",
  "enum-map",
+ "image",
  "itertools",
  "log",
  "profiling",
@@ -1975,6 +1980,8 @@ dependencies = [
  "num-traits",
  "png 0.18.1",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

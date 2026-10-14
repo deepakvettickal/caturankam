@@ -4,6 +4,8 @@
 
 pub mod auth;
 
+pub use reqwest::Client as HttpClient;
+
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::time::Duration;

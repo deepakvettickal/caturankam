@@ -25,6 +25,9 @@ Each mode controls: **animations, pieces, the board, sounds/music.**
 
 1. **Lightweight.** No browser engine, no Electron, no webview. Target: sub-second cold start,
    low idle RAM, near-zero idle CPU. Treat regressions here as bugs.
+   **Everything is lazy-loaded:** a feature costs no memory until it's used. The network thread
+   starts only on login or a download; piece sets and boards load only when picked and are
+   dropped on switch; audio, engines and screens follow the same rule.
 2. **Themes are data, not code.** A theme is a bundle (manifest + assets). Game logic and the
    Lichess layer must never know which theme is active. Adding a mode = adding a theme pack.
 3. **Fair play (Lichess ToS).** The Board API forbids engine assistance. Nothing in any mode may

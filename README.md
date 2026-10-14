@@ -10,9 +10,15 @@ Caturankam for Lichess is an independent project, not an official Lichess app.
 
 ## Status
 
-Early draft: a local board in the **Original** mode. Play both sides with click or drag,
-with legal-move enforcement, move animation, promotion, board flip and a move list. Lichess login and
-online play come next; Zen, Chaos and Ancient modes after that.
+Early draft, **Original** mode:
+
+- Log in with your Lichess account (OAuth with PKCE; the token stays in the OS keychain).
+- Play online: Rapid and Classical quick pairing, or the Lichess computer at levels 1–8
+  (Blitz too). Clocks, draw offers, resign/abort, reconnect on dropped connections.
+- All of Lichess's 2D piece sets and boards, downloaded on demand.
+- A local board to play both sides offline.
+
+Zen, Chaos and Ancient modes come later.
 
 ## Run
 
@@ -26,7 +32,7 @@ cargo run --release
 |---|---|
 | `crates/core` | Game model on top of `shakmaty`. No I/O, no UI. |
 | `crates/theme` | Theme manifest (`themes/*/theme.toml`) schema and loading. |
-| `crates/lichess` | Lichess API client (not started). |
+| `crates/lichess` | Lichess API client: login, streams, seeks, moves. |
 | `crates/app` | The `eframe` app: board widget, screens. |
 
 ## Licence

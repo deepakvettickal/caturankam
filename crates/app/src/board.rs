@@ -1,13 +1,22 @@
 //! The board widget: draws a `Game` with the active theme and turns pointer
 //! input into move intents. It never mutates the game itself.
 
+use crate::assets::{BoardImage, PieceSet};
 use caturankam_core::{Color, File, Game, MoveEvent, Piece, Rank, Role, Square};
-use caturankam_theme::{Coordinates, PIECES, Rgb, Theme};
+use caturankam_theme::{Coordinates, Rgb, Theme};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Sense, Shadow, Stroke, Vec2,
 };
 
 const CORNER: u8 = 6;
+
+/// Everything visual the board needs: the mode's theme plus the user's
+/// chosen piece set and (optional) board image.
+pub struct Look<'a> {
+    pub theme: &'a Theme,
+    pub pieces: &'a PieceSet,
+    pub board: Option<&'a BoardImage>,
+}
 
 /// A move the user asked for. The app decides whether to play it.
 pub struct Intent {
@@ -55,8 +64,8 @@ impl BoardView {
         &mut self,
         ui: &mut egui::Ui,
         game: &Game,
-        theme: &Theme,
-        interactive: bool,
+        look: &Look,
+        movable: Option<Color>,
     ) -> Option<Intent> {
         let avail = ui.available_rect_before_wrap();
         // Whole points per square keeps square edges and piece rasters crisp.
@@ -69,8 +78,10 @@ impl BoardView {
             flipped: self.flipped,
         };
 
-        let intent = if interactive {
-            self.handle_input(&resp, &geo, game)
+        // Only the side allowed to move right now can be picked up.
+        let movable = movable.filter(|&c| c == game.turn());
+        let intent = if let Some(side) = movable {
+            self.handle_input(&resp, &geo, game, side)
         } else {
             self.selected = None;
             self.dragging = None;
@@ -79,7 +90,8 @@ impl BoardView {
 
         let now = ui.input(|i| i.time);
         let anim_t = self.anim.as_ref().map(|a| {
-            ((now - a.start) * 1000.0 / f64::from(theme.animation.move_ms.max(1))).min(1.0) as f32
+            ((now - a.start) * 1000.0 / f64::from(look.theme.animation.move_ms.max(1))).min(1.0)
+                as f32
         });
         if anim_t == Some(1.0) {
             self.anim = None;
@@ -90,7 +102,7 @@ impl BoardView {
         let pointer = resp
             .interact_pointer_pos()
             .or(ui.input(|i| i.pointer.latest_pos()));
-        self.paint(ui, &geo, game, theme, anim_t, pointer);
+        self.paint(ui, &geo, game, look, anim_t, pointer);
         intent
     }
 
@@ -99,14 +111,11 @@ impl BoardView {
         resp: &egui::Response,
         geo: &Geometry,
         game: &Game,
+        side: Color,
     ) -> Option<Intent> {
         let pos = resp.interact_pointer_pos()?;
         let sq = geo.square_at(pos);
-        let own = |s: Square| {
-            game.board()
-                .piece_at(s)
-                .is_some_and(|p| p.color == game.turn())
-        };
+        let own = |s: Square| game.board().piece_at(s).is_some_and(|p| p.color == side);
 
         if resp.drag_started() {
             self.dragging = sq.filter(|&s| own(s));
@@ -150,12 +159,12 @@ impl BoardView {
         ui: &egui::Ui,
         geo: &Geometry,
         game: &Game,
-        theme: &Theme,
+        look: &Look,
         anim_t: Option<f32>,
         pointer: Option<Pos2>,
     ) {
         let p = ui.painter();
-        let b = &theme.board;
+        let b = &look.theme.board;
         let size = geo.square_size();
 
         let shadow = Shadow {
@@ -165,12 +174,19 @@ impl BoardView {
             color: Color32::from_black_alpha(140),
         };
         p.add(shadow.as_shape(geo.rect, CORNER));
+        if let Some(img) = look.board {
+            egui::Image::from_bytes(img.uri.clone(), img.bytes.clone())
+                .corner_radius(CORNER)
+                .paint_at(ui, geo.rect);
+        }
 
         for sq in Square::ALL {
             let r = geo.square_rect(sq);
             let round = geo.corner_radius(sq);
             let is_dark = (u32::from(sq.file()) + u32::from(sq.rank())).is_multiple_of(2);
-            p.rect_filled(r, round, rgb(if is_dark { b.dark } else { b.light }));
+            if look.board.is_none() {
+                p.rect_filled(r, round, rgb(if is_dark { b.dark } else { b.light }));
+            }
 
             if game.last_move().is_some_and(|(f, t)| sq == f || sq == t) {
                 p.rect_filled(r, round, rgba(b.highlight, 120));
@@ -179,7 +195,14 @@ impl BoardView {
                 p.rect_filled(r, round, rgba(b.highlight, 190));
             }
             if b.coordinates == Coordinates::Subtle {
-                paint_coordinates(p, geo, sq, rgb(if is_dark { b.light } else { b.dark }));
+                // Board images don't tell us their colours: use contrast ink instead.
+                let ink = match (look.board, is_dark) {
+                    (None, true) => rgb(b.light),
+                    (None, false) => rgb(b.dark),
+                    (Some(_), true) => Color32::from_white_alpha(210),
+                    (Some(_), false) => Color32::from_black_alpha(150),
+                };
+                paint_coordinates(p, geo, sq, ink);
             }
         }
 
@@ -217,7 +240,7 @@ impl BoardView {
         for (sq, piece) in game.board().clone() {
             let hidden = self.dragging == Some(sq) || anim.is_some_and(|(a, _)| a.to == sq);
             if !hidden {
-                draw_piece(ui, theme, geo.square_rect(sq).center(), size, piece);
+                draw_piece(ui, look.pieces, geo.square_rect(sq).center(), size, piece);
             }
         }
 
@@ -225,7 +248,7 @@ impl BoardView {
             let eased = -((std::f32::consts::PI * t).cos() - 1.0) / 2.0; // ease-in-out sine
             let from = geo.square_rect(a.from).center();
             let to = geo.square_rect(a.to).center();
-            draw_piece(ui, theme, from + (to - from) * eased, size, a.piece);
+            draw_piece(ui, look.pieces, from + (to - from) * eased, size, a.piece);
         }
         if let (Some(sq), Some(pos)) = (self.dragging, pointer)
             && let Some(piece) = game.board().piece_at(sq)
@@ -242,7 +265,7 @@ impl BoardView {
                 Vec2::new(size * 0.55, size * 0.12),
             );
             p.add(lift.as_shape(footprint, u8::MAX));
-            draw_piece(ui, theme, pos, size, piece);
+            draw_piece(ui, look.pieces, pos, size, piece);
         }
     }
 }
@@ -327,13 +350,13 @@ impl Geometry {
     }
 }
 
-/// Paints a piece from the theme's SVG set, centred on `center`.
-fn draw_piece(ui: &egui::Ui, theme: &Theme, center: Pos2, size: f32, piece: Piece) {
+/// Paints a piece from the SVG set, centred on `center`.
+fn draw_piece(ui: &egui::Ui, set: &PieceSet, center: Pos2, size: f32, piece: Piece) {
     let rect = Rect::from_center_size(center, Vec2::splat(size));
-    piece_image(theme, piece).paint_at(ui, rect);
+    piece_image(set, piece).paint_at(ui, rect);
 }
 
-pub fn piece_image(theme: &Theme, piece: Piece) -> egui::Image<'static> {
+pub fn piece_image(set: &PieceSet, piece: Piece) -> egui::Image<'static> {
     let role = match piece.role {
         Role::King => 0,
         Role::Queen => 1,
@@ -343,9 +366,8 @@ pub fn piece_image(theme: &Theme, piece: Piece) -> egui::Image<'static> {
         Role::Pawn => 5,
     };
     let i = role + if piece.color == Color::White { 0 } else { 6 };
-    // The URI keys egui's raster cache, so it must be unique per theme and piece.
-    let uri = format!("bytes://{}/{}.svg", theme.id, PIECES[i]);
-    egui::Image::from_bytes(uri, theme.pieces[i])
+    // The URI keys egui's raster cache, so each set has its own.
+    egui::Image::from_bytes(set.uris[i].clone(), set.svgs[i].clone())
 }
 
 pub fn rgb(c: Rgb) -> Color32 {

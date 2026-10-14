@@ -25,10 +25,10 @@ use style::{Kind, Pal, button, kbd, medium, mono, muted, row, rule, section};
 /// Rapid and Classical: the only real-time controls Lichess lets Board API
 /// clients seek. (minutes, increment), on keys 1–5.
 const SEEKS: [(u32, u32); 5] = [(10, 0), (10, 5), (15, 10), (30, 0), (30, 20)];
-/// Against the computer Blitz is allowed too. Keys 6–0.
-const AI_CLOCKS: [(u32, u32); 5] = [(3, 2), (5, 3), (10, 0), (10, 5), (15, 10)];
+/// Against the computer Blitz is allowed too. Keys 6–0 and -.
+const AI_CLOCKS: [(u32, u32); 6] = [(3, 2), (5, 0), (5, 3), (10, 0), (10, 5), (15, 10)];
 const SEEK_KEYS: [&str; 5] = ["1", "2", "3", "4", "5"];
-const AI_KEYS: [&str; 5] = ["6", "7", "8", "9", "0"];
+const AI_KEYS: [&str; 6] = ["6", "7", "8", "9", "0", "-"];
 const NOTICE_SECS: f64 = 6.0;
 /// After hiding the sidebar, "Show sidebar [S]" stays this long, then fades.
 const HINT_SECS: f64 = 2.0;
@@ -621,6 +621,7 @@ impl App {
             Key::Num8,
             Key::Num9,
             Key::Num0,
+            Key::Minus,
         ];
         for (i, k) in digits.into_iter().enumerate() {
             bind.push((

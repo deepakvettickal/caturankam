@@ -1,6 +1,6 @@
 //! Game model on top of shakmaty. No I/O, no UI.
 
-use shakmaty::{CastlingMode, Chess, Move, Position, fen::Fen, san::SanPlus};
+use shakmaty::{CastlingMode, Chess, Move, Position, fen::Fen, san::SanPlus, uci::UciMove};
 
 pub use shakmaty::{Board, Color, File, KnownOutcome, Outcome, Piece, Rank, Role, Square};
 
@@ -10,6 +10,8 @@ pub enum Error {
     Fen(String),
     #[error("illegal move")]
     IllegalMove,
+    #[error("invalid UCI move: {0}")]
+    Uci(String),
 }
 
 /// What a move did, so the UI can animate it and play the right sound.
@@ -29,6 +31,7 @@ pub struct Game {
     last_move: Option<(Square, Square)>,
     /// Moves played so far, in SAN (e.g. `e4`, `Nxf7+`, `O-O`).
     san: Vec<String>,
+    last_uci: Option<String>,
 }
 
 impl Game {
@@ -41,6 +44,43 @@ impl Game {
             position,
             ..Self::default()
         })
+    }
+
+    /// Rebuilds a game the way Lichess streams it: a start position
+    /// (`startpos` or a FEN) plus space-separated UCI moves. Also returns the
+    /// last move's event, so the UI can animate it.
+    pub fn from_uci(initial: &str, moves: &str) -> Result<(Self, Option<MoveEvent>), Error> {
+        let mut game = match initial {
+            "startpos" | "" => Self::default(),
+            fen => Self::from_fen(fen)?,
+        };
+        let mut last = None;
+        for uci in moves.split_whitespace() {
+            last = Some(game.play_uci(uci)?);
+        }
+        Ok((game, last))
+    }
+
+    /// Accepts both castling forms: king two squares (`e1g1`) or king to rook (`e1h1`).
+    pub fn play_uci(&mut self, uci: &str) -> Result<MoveEvent, Error> {
+        let parsed: UciMove = uci.parse().map_err(|_| Error::Uci(uci.into()))?;
+        match parsed {
+            UciMove::Normal {
+                from,
+                to,
+                promotion,
+            } => self.play(from, to, promotion),
+            _ => Err(Error::Uci(uci.into())),
+        }
+    }
+
+    /// The last move in UCI with standard castling (`e1g1`), as Lichess expects it.
+    pub fn last_uci(&self) -> Option<String> {
+        self.last_uci.clone()
+    }
+
+    pub fn ply(&self) -> usize {
+        self.san.len()
     }
 
     pub fn board(&self) -> &Board {
@@ -96,6 +136,7 @@ impl Game {
         let m = self.find(from, to, promotion).ok_or(Error::IllegalMove)?;
         let piece = self.board().piece_at(from).ok_or(Error::IllegalMove)?;
         let to = landing(m);
+        self.last_uci = Some(m.to_uci(CastlingMode::Standard).to_string());
         let san = SanPlus::from_move_and_play_unchecked(&mut self.position, m);
         self.san.push(san.to_string());
         self.last_move = Some((from, to));
@@ -183,6 +224,31 @@ mod tests {
 
         let mut g = Game::from_fen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1").unwrap();
         assert!(g.play(E4, D5, None).unwrap().capture);
+    }
+
+    #[test]
+    fn rebuilds_from_lichess_moves() {
+        // Lichess streams castling king-to-rook; promotions carry the piece letter.
+        let (g, last) = Game::from_uci("startpos", "e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 e1h1").unwrap();
+        assert_eq!(g.ply(), 7);
+        assert_eq!(g.san_moves().last().map(String::as_str), Some("O-O"));
+        assert_eq!(g.last_uci().as_deref(), Some("e1g1"));
+        assert_eq!(last.unwrap().to, G1);
+
+        let (g, _) = Game::from_uci("8/P7/8/8/8/8/8/k6K w - - 0 1", "a7a8n").unwrap();
+        assert_eq!(g.board().piece_at(A8).map(|p| p.role), Some(Role::Knight));
+
+        let (g, last) = Game::from_uci("startpos", "").unwrap();
+        assert!(last.is_none() && g.ply() == 0);
+
+        assert!(matches!(
+            Game::from_uci("startpos", "e2e5"),
+            Err(Error::IllegalMove)
+        ));
+        assert!(matches!(
+            Game::from_uci("startpos", "zz"),
+            Err(Error::Uci(_))
+        ));
     }
 
     #[test]

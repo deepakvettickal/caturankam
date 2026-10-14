@@ -7,6 +7,16 @@ license.workspace = true
 
 [dependencies]
 caturankam-core.workspace = true
+caturankam-lichess.workspace = true
 caturankam-theme.workspace = true
 eframe.workspace = true
-egui_extras.workspace = true  # SVG piece rendering (resvg)
+egui_extras.workspace = true  # SVG pieces (resvg) and JPG/PNG boards
+image.workspace = true        # decoders for egui_extras: JPG/PNG boards only
+dirs.workspace = true         # cache/config paths per OS
+keyring.workspace = true       # access token in the OS keychain, never on disk
+serde.workspace = true
+toml.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }  # network thread, started lazily
+
+[dev-dependencies]
+serde_json.workspace = true

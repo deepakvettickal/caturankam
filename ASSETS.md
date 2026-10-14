@@ -5,6 +5,8 @@ Every piece set, image, sound and track shipped with Caturankam, with its source
 | Asset | Source | Licence |
 |---|---|---|
 | Original pieces (`themes/original/pieces/*.svg`) | Cburnett set, [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Chess_klt45.svg), unmodified | BSD-3-Clause (chosen from the author's GFDL/CC BY-SA/BSD/GPL options), see [`themes/original/pieces/LICENSE`](themes/original/pieces/LICENSE) |
+| `docs/screenshots/light.png` | App screenshot with the Lichess **totoy** pieces (Kosal Sen) on the **marble** board (lila authors) | Pieces CC BY 4.0; board AGPLv3+ (per lila's [COPYING.md](https://github.com/lichess-org/lila/blob/master/COPYING.md)) |
+| `docs/screenshots/dark.png` | App screenshot with the Lichess **minimal-warmth** pieces ([blunder_reign](https://lichess.org/@/blunder_reign)) on the **newspaper** board (lila authors) | Pieces CC BY-NC-SA 4.0, so this screenshot file is CC BY-NC-SA 4.0; board AGPLv3+ |
 | Original board and UI colours | Plain hex values in `themes/original/theme.toml` | MIT (this repo) |
 
 Note: Lichess redistributes the Cburnett set under GPLv2+. Ours comes from the Wikimedia

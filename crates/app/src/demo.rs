@@ -4,6 +4,9 @@
 //! - `CATURANKAM_DEMO=1`: default settings that are never saved; no saved login.
 //! - `CATURANKAM_DARK=1`: dark appearance.
 //! - `CATURANKAM_MOVES="e2e4 e7e5"`: moves to play on the local board.
+//! - `CATURANKAM_USER=name`: show the logged-in lobby as `name`, offline (nothing is
+//!   sent anywhere; for screenshots only).
+//! - `CATURANKAM_PIECES=chessnut`, `CATURANKAM_BOARD=wood4`: a Lichess piece set and board.
 //! - `CATURANKAM_SHOT=out.png`: capture the window once it has settled, then quit.
 //!
 //! The window captures itself, so no screen-recording permission is needed.
@@ -17,6 +20,9 @@ const SETTLE_FRAMES: u32 = 10;
 pub struct Demo {
     pub dark: bool,
     pub moves: String,
+    pub user: Option<String>,
+    pub pieces: Option<String>,
+    pub board: Option<String>,
     shot: Option<PathBuf>,
     frames: u32,
     requested: bool,
@@ -29,16 +35,22 @@ impl Demo {
         Some(Self {
             dark: var("CATURANKAM_DARK").is_some(),
             moves: var("CATURANKAM_MOVES").unwrap_or_default(),
+            user: var("CATURANKAM_USER"),
+            pieces: var("CATURANKAM_PIECES"),
+            board: var("CATURANKAM_BOARD"),
             shot: var("CATURANKAM_SHOT").map(PathBuf::from),
             frames: 0,
             requested: false,
         })
     }
 
-    /// Call once per frame: requests the capture, then saves it and quits.
-    pub fn frame(&mut self, ctx: &egui::Context) {
+    /// Call once per frame: requests the capture (once `ready`, i.e. no
+    /// downloads pending), then saves it and quits.
+    pub fn frame(&mut self, ctx: &egui::Context, ready: bool) {
         let Some(path) = &self.shot else { return };
-        self.frames += 1;
+        if ready {
+            self.frames += 1;
+        }
         if !self.requested && self.frames >= SETTLE_FRAMES {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             self.requested = true;

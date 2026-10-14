@@ -88,7 +88,7 @@ impl MenuBar {
                 )
                 .collect();
         let boards: Vec<CheckMenuItem> =
-            std::iter::once(check("board:".into(), "brown (built in)"))
+            std::iter::once(check("board:".into(), "stone (built in)"))
                 .chain(
                     BOARDS[1..]
                         .iter()

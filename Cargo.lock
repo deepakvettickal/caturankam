@@ -674,6 +674,7 @@ dependencies = [
  "egui_extras",
  "image",
  "keyring",
+ "memmap2",
  "muda",
  "serde",
  "serde_json",

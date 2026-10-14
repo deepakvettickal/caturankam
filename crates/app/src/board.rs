@@ -5,10 +5,8 @@ use crate::assets::{BoardImage, PieceSet};
 use caturankam_core::{Color, File, Game, MoveEvent, Piece, Rank, Role, Square};
 use caturankam_theme::{Coordinates, Rgb, Theme};
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Sense, Shadow, Stroke, Vec2,
+    self, Align2, Color32, FontId, Painter, Pos2, Rect, Sense, Shadow, Stroke, Vec2,
 };
-
-const CORNER: u8 = 6;
 
 /// Everything visual the board needs: the mode's theme plus the user's
 /// chosen piece set and (optional) board image.
@@ -163,32 +161,22 @@ impl BoardView {
         let b = &look.theme.board;
         let size = geo.square_size();
 
-        let shadow = Shadow {
-            offset: [0, 8],
-            blur: 28,
-            spread: 0,
-            color: Color32::from_black_alpha(140),
-        };
-        p.add(shadow.as_shape(geo.rect, CORNER));
         if let Some(img) = look.board {
-            egui::Image::from_bytes(img.uri.clone(), img.bytes.clone())
-                .corner_radius(CORNER)
-                .paint_at(ui, geo.rect);
+            egui::Image::from_bytes(img.uri.clone(), img.bytes.clone()).paint_at(ui, geo.rect);
         }
 
         for sq in Square::ALL {
             let r = geo.square_rect(sq);
-            let round = geo.corner_radius(sq);
             let is_dark = (u32::from(sq.file()) + u32::from(sq.rank())).is_multiple_of(2);
             if look.board.is_none() {
-                p.rect_filled(r, round, rgb(if is_dark { b.dark } else { b.light }));
+                p.rect_filled(r, 0.0, rgb(if is_dark { b.dark } else { b.light }));
             }
 
             if game.last_move().is_some_and(|(f, t)| sq == f || sq == t) {
-                p.rect_filled(r, round, rgba(b.highlight, 120));
+                p.rect_filled(r, 0.0, rgba(b.highlight, 120));
             }
             if self.selected == Some(sq) {
-                p.rect_filled(r, round, rgba(b.highlight, 190));
+                p.rect_filled(r, 0.0, rgba(b.highlight, 190));
             }
             if b.coordinates == Coordinates::Subtle {
                 // Board images don't tell us their colours: use contrast ink instead.
@@ -223,7 +211,7 @@ impl BoardView {
             for to in game.targets(from) {
                 let r = geo.square_rect(to);
                 if hover == Some(to) {
-                    p.rect_filled(r, geo.corner_radius(to), Color32::from_black_alpha(35));
+                    p.rect_filled(r, 0.0, Color32::from_black_alpha(35));
                 } else if game.board().piece_at(to).is_some() {
                     p.circle_stroke(r.center(), size * 0.46, Stroke::new(size * 0.06, dot));
                 } else {
@@ -322,23 +310,6 @@ impl Geometry {
         Rect::from_min_size(min, Vec2::splat(s))
     }
 
-    /// Rounds only the board's four outer corners.
-    fn corner_radius(&self, sq: Square) -> CornerRadius {
-        let at = |c, r| {
-            if (self.view_col(sq), self.view_row(sq)) == (c, r) {
-                CORNER
-            } else {
-                0
-            }
-        };
-        CornerRadius {
-            nw: at(0, 0),
-            ne: at(7, 0),
-            sw: at(0, 7),
-            se: at(7, 7),
-        }
-    }
-
     fn square_at(&self, pos: Pos2) -> Option<Square> {
         if !self.rect.contains(pos) {
             return None;
@@ -374,7 +345,7 @@ pub fn piece_image(set: &PieceSet, piece: Piece) -> egui::Image<'static> {
     egui::Image::from_bytes(set.uris[i].clone(), set.svgs[i].clone())
 }
 
-pub fn rgb(c: Rgb) -> Color32 {
+fn rgb(c: Rgb) -> Color32 {
     let [r, g, b] = c.0;
     Color32::from_rgb(r, g, b)
 }
@@ -406,7 +377,5 @@ mod tests {
             Some(Square::A1)
         );
         assert_eq!(geo.square_at(Pos2::ZERO), None);
-        assert_eq!(geo.corner_radius(Square::A1).sw, CORNER);
-        assert_eq!(geo.corner_radius(Square::E4), CornerRadius::ZERO);
     }
 }

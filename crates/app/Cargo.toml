@@ -24,3 +24,6 @@ serde_json.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }  # native macOS menu bar
 memmap2.workspace = true  # map SF Pro instead of copying 8 MB into RAM
+# Already in the tree via winit/muda; "exception" lets mac_crash_guard.rs
+# catch one known AppKit exception instead of aborting on window close.
+objc2 = { version = "0.6", features = ["exception"] }

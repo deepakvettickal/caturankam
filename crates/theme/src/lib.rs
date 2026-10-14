@@ -34,6 +34,8 @@ pub struct Theme {
     pub board: Board,
     pub animation: Animation,
     pub ui: Ui,
+    /// The same chrome for dark mode; themes without one stay light.
+    pub ui_dark: Option<Ui>,
     /// SVG bytes in [`PIECES`] order. Filled by the loader, not the manifest.
     // shortcut: built-in themes only; becomes owned bytes when themes load from disk.
     #[serde(skip)]
@@ -44,8 +46,16 @@ pub struct Theme {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Ui {
     pub background: Rgb,
-    pub panel: Rgb,
+    /// Buttons, cards, popovers.
+    pub surface: Rgb,
+    /// Hairline borders and separators.
+    pub line: Rgb,
     pub text: Rgb,
+    /// Secondary text.
+    pub muted: Rgb,
+    /// Fill of the one main button.
+    pub primary: Rgb,
+    /// Highlighter for selection and focus.
     pub accent: Rgb,
 }
 
@@ -113,7 +123,7 @@ mod tests {
     fn original_parses() {
         let t = Theme::original();
         assert_eq!(t.id, "original");
-        assert_eq!(t.board.light, Rgb([0xF0, 0xD9, 0xB5]));
+        assert_eq!(t.board.light, Rgb([0xEC, 0xE6, 0xD8]));
         assert_eq!(t.board.coordinates, Coordinates::Subtle);
         assert!(
             t.pieces
@@ -126,8 +136,8 @@ mod tests {
     fn tolerates_extensions_rejects_bad_colours() {
         let ok = ORIGINAL.to_owned() + "\n[chaos]\nstreak = 3\n";
         assert!(Theme::parse(&ok).is_ok());
-        for bad in ["#F0D9B", "F0D9B5", "#GGD9B5", "#F0D9B5FF", "#é0D9B"] {
-            let m = ORIGINAL.replace("#F0D9B5", bad);
+        for bad in ["#ECE6D", "ECE6D8", "#GGE6D8", "#ECE6D8FF", "#éCE6D"] {
+            let m = ORIGINAL.replace("#ECE6D8", bad);
             assert!(Theme::parse(&m).is_err(), "{bad} should be rejected");
         }
     }

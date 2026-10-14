@@ -8,6 +8,9 @@ use muda::accelerator::Accelerator;
 use muda::{AboutMetadata, CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use std::sync::mpsc;
 
+/// ⇧⌘D for dark mode.
+const DARK_KEY: &str = "Shift+CmdOrCtrl+D";
+
 /// ⌃⌘S, the standard macOS sidebar toggle.
 const SIDEBAR_KEY: &str = "Control+Super+S";
 
@@ -19,6 +22,7 @@ pub struct MenuState {
     pub piece_set: Option<String>,
     pub board: Option<String>,
     pub sidebar_hidden: bool,
+    pub dark: bool,
 }
 
 pub struct MenuBar {
@@ -26,6 +30,8 @@ pub struct MenuBar {
     login: MenuItem,
     logout: MenuItem,
     sidebar: MenuItem,
+    light: CheckMenuItem,
+    dark: CheckMenuItem,
     pieces: Vec<CheckMenuItem>,
     boards: Vec<CheckMenuItem>,
     rx: mpsc::Receiver<String>,
@@ -88,7 +94,7 @@ impl MenuBar {
                 )
                 .collect();
         let boards: Vec<CheckMenuItem> =
-            std::iter::once(check("board:".into(), "brown (built in)"))
+            std::iter::once(check("board:".into(), "stone (built in)"))
                 .chain(
                     BOARDS[1..]
                         .iter()
@@ -96,10 +102,13 @@ impl MenuBar {
                 )
                 .collect();
         let sidebar = item("sidebar", "Hide Sidebar", Some(SIDEBAR_KEY));
+        let light = CheckMenuItem::with_id("light", "Light", true, false, None);
+        let dark = CheckMenuItem::with_id("dark", "Dark", true, false, key(DARK_KEY));
         let view = submenu(
             "View",
             &[
                 &sidebar,
+                &submenu("Appearance", &[&light, &dark]),
                 &PredefinedMenuItem::separator(),
                 &submenu("Pieces", &pieces.iter().map(|i| i as _).collect::<Vec<_>>()),
                 &submenu("Board", &boards.iter().map(|i| i as _).collect::<Vec<_>>()),
@@ -140,6 +149,8 @@ impl MenuBar {
             login,
             logout,
             sidebar,
+            light,
+            dark,
             pieces,
             boards,
             rx,
@@ -163,6 +174,8 @@ impl MenuBar {
         } else {
             "Hide Sidebar"
         });
+        self.light.set_checked(!state.dark);
+        self.dark.set_checked(state.dark);
         let piece = format!("piece:{}", state.piece_set.as_deref().unwrap_or(""));
         for i in &self.pieces {
             i.set_checked(i.id().0 == piece);
@@ -189,6 +202,8 @@ fn action(id: &str) -> Option<Action> {
         "logout" => Action::Logout,
         "random" => Action::Randomize,
         "sidebar" => Action::ToggleSidebar,
+        "light" => Action::Dark(false),
+        "dark" => Action::Dark(true),
         _ => {
             if let Some(set) = id.strip_prefix("piece:") {
                 Action::Pieces(name(set))
@@ -216,6 +231,8 @@ mod tests {
             Some(Action::Board(Some("wood4".into())))
         );
         assert_eq!(action("nonsense"), None);
+        assert_eq!(action("dark"), Some(Action::Dark(true)));
         assert!(SIDEBAR_KEY.parse::<Accelerator>().is_ok());
+        assert!(DARK_KEY.parse::<Accelerator>().is_ok());
     }
 }

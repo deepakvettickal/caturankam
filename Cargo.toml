@@ -17,6 +17,7 @@ dirs = "7"
 getrandom = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 keyring = "4"
+memmap2 = "0.9"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "form", "query"] }
 serde_json = "1"
 sha2 = "0.11"

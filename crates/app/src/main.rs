@@ -1,5 +1,7 @@
 mod assets;
 mod board;
+#[cfg(target_os = "macos")]
+mod menu;
 mod net;
 mod online;
 mod settings;
@@ -22,12 +24,24 @@ const SEEKS: &[(u32, u32)] = &[(10, 0), (10, 5), (15, 10), (30, 0), (30, 20)];
 const AI_CLOCKS: &[(u32, u32)] = &[(3, 2), (5, 0), (5, 3), (10, 0), (10, 5), (15, 10)];
 const NOTICE_SECS: f64 = 6.0;
 
+/// Height of the macOS titlebar strip the content extends under.
+#[cfg(target_os = "macos")]
+const TITLEBAR: f32 = 28.0;
+
 fn main() -> eframe::Result {
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("Caturankam")
+        .with_inner_size([1000.0, 720.0])
+        .with_min_inner_size([720.0, 480.0]);
+    // Unified titlebar, like Notes or Music: content runs under a transparent
+    // titlebar and the window keeps its native traffic lights.
+    #[cfg(target_os = "macos")]
+    let viewport = viewport
+        .with_fullsize_content_view(true)
+        .with_title_shown(false)
+        .with_titlebar_shown(false);
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Caturankam")
-            .with_inner_size([1000.0, 720.0])
-            .with_min_inner_size([720.0, 480.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
@@ -37,10 +51,26 @@ fn main() -> eframe::Result {
     )
 }
 
+/// Something the user asked for, from the menu bar or a button.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Action {
+    NewGame,
+    Flip,
+    Login,
+    Logout,
+    /// `None` is the built-in set.
+    Pieces(Option<String>),
+    /// `None` is the theme's own colours.
+    Board(Option<String>),
+    Randomize,
+}
+
 enum Account {
     LoggedOut,
     LoggingIn,
     Connecting(String),
+    /// Saved session, but Lichess couldn't be reached.
+    Offline(String),
     LoggedIn(String),
 }
 
@@ -75,6 +105,8 @@ struct App {
     lobby: Lobby,
     notice: Option<(String, f64)>,
     show_appearance: bool,
+    #[cfg(target_os = "macos")]
+    menu: menu::MenuBar,
     confirm_resign: bool,
     draw_offered: bool,
 }
@@ -103,6 +135,8 @@ impl App {
             },
             notice: None,
             show_appearance: false,
+            #[cfg(target_os = "macos")]
+            menu: menu::MenuBar::install(ctx),
             confirm_resign: false,
             draw_offered: false,
         };
@@ -203,8 +237,10 @@ impl App {
                 }
             }
             Evt::Notice(msg) => {
-                if matches!(self.account, Account::LoggingIn) {
-                    self.account = Account::LoggedOut;
+                match &self.account {
+                    Account::LoggingIn => self.account = Account::LoggedOut,
+                    Account::Connecting(user) => self.account = Account::Offline(user.clone()),
+                    _ => {}
                 }
                 self.notify(ctx, msg);
             }
@@ -336,8 +372,99 @@ impl App {
         });
     }
 
+    fn act(&mut self, ctx: &egui::Context, action: Action) {
+        match action {
+            Action::NewGame => {
+                if matches!(self.play, Play::Local) {
+                    self.local = Game::default();
+                    self.board.reset();
+                    self.promoting = None;
+                } else {
+                    self.notify(ctx, "Finish or leave the online game first.");
+                }
+            }
+            Action::Flip => self.board.flipped = !self.board.flipped,
+            Action::Login => {
+                if matches!(self.account, Account::LoggedOut) {
+                    self.account = Account::LoggingIn;
+                    self.net(ctx).send(Cmd::Login);
+                }
+            }
+            Action::Logout => {
+                if let Play::Seeking { .. } = self.play {
+                    self.net(ctx).send(Cmd::CancelSeek);
+                }
+                self.net(ctx).send(Cmd::Logout);
+            }
+            Action::Pieces(set) => {
+                self.settings.piece_set = set;
+                self.settings.save();
+                self.apply_appearance(ctx);
+            }
+            Action::Board(board) => {
+                self.settings.board = board;
+                self.settings.save();
+                self.apply_appearance(ctx);
+            }
+            Action::Randomize => {
+                // Index 0 of each catalog is the built-in one, which is `None`.
+                let pick = |names: Vec<&str>, current: Option<&str>| {
+                    let at = names
+                        .iter()
+                        .position(|n| Some(*n) == current)
+                        .map_or(0, |i| i + 1);
+                    let i = pick_other(at, names.len() + 1, random());
+                    (i > 0).then(|| names[i - 1].to_string())
+                };
+                self.settings.piece_set =
+                    pick(PIECE_SETS[1..].to_vec(), self.settings.piece_set.as_deref());
+                let boards = BOARDS[1..].iter().map(|(n, _)| *n).collect();
+                self.settings.board = pick(boards, self.settings.board.as_deref());
+                self.settings.save();
+                self.apply_appearance(ctx);
+            }
+        }
+    }
+
     // ---- UI ----
 
+    /// macOS: the strip under the transparent titlebar. Drags and zooms the
+    /// window like a native one; everything else lives in the menu bar.
+    #[cfg(target_os = "macos")]
+    fn top_bar(&mut self, ui: &mut egui::Ui) {
+        let frame = egui::Frame::new().fill(rgb(self.theme.ui.panel));
+        egui::Panel::top("titlebar")
+            .frame(frame)
+            .exact_size(TITLEBAR)
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                let rect = ui.max_rect();
+                let strip = ui.interact(
+                    rect,
+                    egui::Id::new("titlebar"),
+                    egui::Sense::click_and_drag(),
+                );
+                if strip.drag_started() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                if strip.double_clicked() {
+                    let zoomed = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!zoomed));
+                }
+                let title = format!("Caturankam · {}", self.theme.name);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    title,
+                    FontId::proportional(13.0),
+                    rgb(self.theme.ui.text).gamma_multiply(0.7),
+                );
+            });
+    }
+
+    /// Elsewhere (until those platforms get native menus): an in-window bar.
+    #[cfg(not(target_os = "macos"))]
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         let frame = egui::Frame::new()
             .fill(rgb(self.theme.ui.panel))
@@ -358,52 +485,57 @@ impl App {
                             ui.label(RichText::new(&self.theme.name).size(12.0).color(accent));
                         });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        self.account_widget(ui);
-                        ui.separator();
+                        let ctx = ui.ctx().clone();
+                        if let Account::LoggedIn(_) = self.account
+                            && ui.button("Log out").clicked()
+                        {
+                            self.act(&ctx, Action::Logout);
+                        }
                         if ui.button("Board & pieces").clicked() {
                             self.show_appearance = !self.show_appearance;
                         }
                         if ui.button("Flip board").clicked() {
-                            self.board.flipped = !self.board.flipped;
+                            self.act(&ctx, Action::Flip);
                         }
                     });
                 });
             });
     }
 
-    fn account_widget(&mut self, ui: &mut egui::Ui) {
+    /// Who's logged in, at the top of the side panel. Logging out lives in the
+    /// Account menu.
+    fn account_header(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        match &self.account {
+        let accent = rgb(self.theme.ui.accent);
+        ui.horizontal(|ui| match &self.account {
             Account::LoggedOut => {
                 if ui.button("Log in with Lichess").clicked() {
-                    self.account = Account::LoggingIn;
-                    self.net(&ctx).send(Cmd::Login);
+                    self.act(&ctx, Action::Login);
                 }
             }
             Account::LoggingIn => {
-                if ui.button("Cancel").clicked() {
+                waiting(ui, "Continue in your browser");
+                if ui.small_button("Cancel").clicked() {
                     self.account = Account::LoggedOut;
                 }
-                ui.label("Finish logging in in your browser…");
-                ui.spinner();
             }
-            Account::Connecting(user) => {
-                ui.label(RichText::new(user).weak());
-                ui.spinner();
+            Account::Connecting(user) => waiting(ui, &format!("Connecting as {user}")),
+            Account::Offline(user) => {
+                ui.label(RichText::new(format!("{user} · offline")).weak());
+                if ui.small_button("Reconnect").clicked() {
+                    self.account = Account::Connecting(user.clone());
+                    self.net(&ctx).send(Cmd::Connect);
+                }
             }
             Account::LoggedIn(user) => {
-                let user = user.clone();
-                ui.menu_button(format!("● {user}"), |ui| {
-                    if ui.button("Log out").clicked() {
-                        if let Play::Seeking { .. } = self.play {
-                            self.net(&ctx).send(Cmd::CancelSeek);
-                        }
-                        self.net(&ctx).send(Cmd::Logout);
-                        ui.close();
-                    }
-                });
+                ui.label(RichText::new("●").color(accent));
+                ui.label(RichText::new(user).strong());
+                ui.label(RichText::new("on Lichess").weak());
             }
-        }
+        });
+        ui.add_space(6.0);
+        ui.separator();
+        ui.add_space(6.0);
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
@@ -416,6 +548,7 @@ impl App {
             .resizable(false)
             .show_separator_line(false)
             .show(ui, |ui| {
+                self.account_header(ui);
                 match &self.play {
                     Play::Local => self.local_panel(ui),
                     Play::Seeking { .. } => self.seeking_panel(ui),
@@ -438,9 +571,8 @@ impl App {
             ui.label(RichText::new(label.to_uppercase()).size(11.0).weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("New game").clicked() {
-                    self.local = Game::default();
-                    self.board.reset();
-                    self.promoting = None;
+                    let ctx = ui.ctx().clone();
+                    self.act(&ctx, Action::NewGame);
                 }
             });
         });
@@ -540,13 +672,12 @@ impl App {
         ui.label(RichText::new("QUICK PAIRING").size(11.0).weak());
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.spinner();
             let text = if ended_at.is_some() {
-                "Starting game…"
+                "Starting game"
             } else {
-                "Finding an opponent…"
+                "Finding an opponent"
             };
-            ui.label(RichText::new(text).size(16.0));
+            waiting(ui, text);
         });
         ui.label(label.as_str());
         ui.add_space(12.0);
@@ -667,7 +798,7 @@ impl App {
 
     fn appearance_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_appearance;
-        let mut changed = false;
+        let (mut changed, mut randomize) = (false, false);
         egui::Window::new("Board & pieces")
             .open(&mut open)
             .collapsible(false)
@@ -686,8 +817,7 @@ impl App {
                     });
                 ui.horizontal(|ui| {
                     if self.assets.loading() {
-                        ui.spinner();
-                        ui.label("Downloading…");
+                        waiting(ui, "Downloading");
                     } else {
                         let set = self.piece_set();
                         for role in [Role::King, Role::Queen, Role::Rook, Role::Bishop, Role::Knight, Role::Pawn] {
@@ -706,6 +836,10 @@ impl App {
                             changed |= ui.selectable_value(&mut self.settings.board, Some((*name).into()), *name).changed();
                         }
                     });
+                ui.add_space(6.0);
+                if ui.button("🎲 Randomize").clicked() {
+                    randomize = true;
+                }
                 ui.add_space(8.0);
                 ui.label(
                     RichText::new("Sets and boards download from lichess.org the first time you pick them, then stay cached. Each keeps its author's licence.")
@@ -717,6 +851,9 @@ impl App {
         if changed {
             self.settings.save();
             self.apply_appearance(ctx);
+        }
+        if randomize {
+            self.act(ctx, Action::Randomize);
         }
     }
 
@@ -762,6 +899,18 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         let now = ui.input(|i| i.time);
         self.poll(&ctx);
+        #[cfg(target_os = "macos")]
+        {
+            for action in self.menu.actions() {
+                self.act(&ctx, action);
+            }
+            self.menu.sync(menu::MenuState {
+                logged_in: matches!(self.account, Account::LoggedIn(_) | Account::Offline(_)),
+                busy: matches!(self.account, Account::LoggingIn | Account::Connecting(_)),
+                piece_set: self.settings.piece_set.clone(),
+                board: self.settings.board.clone(),
+            });
+        }
 
         self.top_bar(ui);
         self.side_panel(ui);
@@ -803,6 +952,16 @@ impl eframe::App for App {
         self.promotion_picker(&ctx, now);
         self.appearance_window(&ctx);
     }
+}
+
+/// "Text…" with dots that cycle a few times a second. Unlike a spinner, it
+/// repaints at 3 Hz instead of the display's full refresh rate: waits like a
+/// browser login can last minutes.
+fn waiting(ui: &mut egui::Ui, text: &str) {
+    let dots = (ui.input(|i| i.time) * 3.0) as usize % 4;
+    ui.label(format!("{text}{:<3}", ".".repeat(dots)));
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(333));
 }
 
 fn local_status(game: &Game) -> (String, &'static str) {
@@ -898,4 +1057,36 @@ fn apply_style(ctx: &egui::Context, theme: &Theme) {
         s.spacing.button_padding = Vec2::new(12.0, 6.0);
         s.spacing.item_spacing = Vec2::new(8.0, 6.0);
     });
+}
+
+/// A random index in `0..n` other than `current` (when there's a choice).
+/// `r` is any random number.
+fn pick_other(current: usize, n: usize, r: u64) -> usize {
+    if n < 2 {
+        return 0;
+    }
+    let i = (r % (n as u64 - 1)) as usize;
+    if i >= current { i + 1 } else { i }
+}
+
+/// Good-enough randomness without a dependency: std's hasher keys are
+/// randomly seeded per process and per `RandomState`.
+fn random() -> u64 {
+    use std::hash::BuildHasher;
+    std::collections::hash_map::RandomState::new().hash_one(Instant::now())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pick_other_never_repeats() {
+        for r in 0..100 {
+            let i = pick_other(3, 10, r);
+            assert!(i < 10 && i != 3);
+        }
+        assert_eq!(pick_other(0, 1, 7), 0);
+        assert_eq!(pick_other(0, 2, 99), 1);
+    }
 }

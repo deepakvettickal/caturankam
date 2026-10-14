@@ -1,6 +1,6 @@
-# Caturankam <sub>/sʌ.t̪ʊ.ɾʌŋ.ɡʌm/ · *suh-thoo-rung-gum*</sub>
+# Caturankam
 
-*Chess, the way it began.*
+`/sʌ.t̪ʊ.ɾʌŋ.ɡʌm/`
 
 A super-lightweight native chess client for Lichess, written in Rust. No browser engine,
 no Electron. Caturankam (சதுரங்கம்) is the Tamil name for chaturanga, chess's ancient

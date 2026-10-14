@@ -1,5 +1,6 @@
 mod assets;
 mod board;
+mod demo;
 #[cfg(target_os = "macos")]
 mod menu;
 mod net;
@@ -27,27 +28,19 @@ const AI_CLOCKS: [(u32, u32); 5] = [(3, 2), (5, 3), (10, 0), (10, 5), (15, 10)];
 const SEEK_KEYS: [&str; 5] = ["1", "2", "3", "4", "5"];
 const AI_KEYS: [&str; 5] = ["6", "7", "8", "9", "0"];
 const NOTICE_SECS: f64 = 6.0;
+/// After hiding the sidebar, "Show sidebar [S]" stays this long, then fades.
+const HINT_SECS: f64 = 2.0;
+const HINT_FADE_SECS: f64 = 0.6;
 /// Height of the name-and-clock strips above and below the board in a game.
 const STRIP: f32 = 44.0;
 /// Space between the board and its crop frame.
 const FRAME: f32 = 3.0;
-
-/// Height of the macOS titlebar strip the content extends under.
-#[cfg(target_os = "macos")]
-const TITLEBAR: f32 = 30.0;
 
 fn main() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Caturankam")
         .with_inner_size([1040.0, 760.0])
         .with_min_inner_size([720.0, 480.0]);
-    // Unified titlebar, like Notes or Music: content runs under a transparent
-    // titlebar and the window keeps its native traffic lights.
-    #[cfg(target_os = "macos")]
-    let viewport = viewport
-        .with_fullsize_content_view(true)
-        .with_title_shown(false)
-        .with_titlebar_shown(false);
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -137,6 +130,9 @@ struct App {
     menu: menu::MenuBar,
     confirm_resign: bool,
     draw_offered: bool,
+    demo: Option<demo::Demo>,
+    /// When the sidebar was last hidden, for the fading "Show sidebar" hint.
+    sidebar_hidden_at: Option<f64>,
 }
 
 impl App {
@@ -144,7 +140,15 @@ impl App {
         egui_extras::install_image_loaders(ctx);
         style::install_fonts(ctx);
         let theme = Theme::original();
-        let settings = Settings::load();
+        let demo = demo::Demo::from_env();
+        let settings = match &demo {
+            Some(d) => Settings {
+                dark: d.dark,
+                ephemeral: true,
+                ..Settings::default()
+            },
+            None => Settings::load(),
+        };
         let pal = Pal::new(&theme, settings.dark);
         let mut app = Self {
             builtin: PieceSet::builtin(&theme),
@@ -169,7 +173,14 @@ impl App {
             menu: menu::MenuBar::install(ctx),
             confirm_resign: false,
             draw_offered: false,
+            demo,
+            sidebar_hidden_at: None,
         };
+        if let Some(d) = &app.demo
+            && let Ok((game, _)) = Game::from_uci("startpos", &d.moves)
+        {
+            app.local = game;
+        }
         app.apply_appearance(ctx);
         app.apply_mode(ctx);
         if let Some(user) = app.settings.username.clone() {
@@ -469,6 +480,8 @@ impl App {
                 // Hide if it is showing now, show if it is hidden.
                 self.settings.sidebar_hidden = self.sidebar_visible();
                 self.settings.save();
+                self.sidebar_hidden_at =
+                    self.settings.sidebar_hidden.then(|| ctx.input(|i| i.time));
             }
             Action::Randomize => {
                 // Index 0 of each catalog is the built-in one, which is `None`.
@@ -612,75 +625,6 @@ impl App {
 
     // ---- UI ----
 
-    /// macOS: the strip under the transparent titlebar. Drags and zooms the
-    /// window like a native one; everything else lives in the menu bar.
-    #[cfg(target_os = "macos")]
-    fn top_bar(&mut self, ui: &mut egui::Ui) {
-        let pal = self.pal;
-        let frame = egui::Frame::new()
-            .fill(pal.bg)
-            .stroke(Stroke::new(1.0, pal.line));
-        egui::Panel::top("titlebar")
-            .frame(frame)
-            .exact_size(TITLEBAR)
-            .show_separator_line(false)
-            .show(ui, |ui| {
-                let rect = ui.max_rect();
-                let strip = ui.interact(
-                    rect,
-                    egui::Id::new("titlebar"),
-                    egui::Sense::click_and_drag(),
-                );
-                if strip.drag_started() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
-                if strip.double_clicked() {
-                    let zoomed = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!zoomed));
-                }
-                // Sidebar toggle at the right, like Finder or Mail. Registered after
-                // the drag strip, so it gets the click.
-                let icon = egui::Rect::from_center_size(
-                    egui::pos2(rect.right() - 24.0, rect.center().y),
-                    Vec2::new(18.0, 13.0),
-                );
-                let toggle = ui
-                    .interact(
-                        icon.expand(5.0),
-                        egui::Id::new("sidebar"),
-                        egui::Sense::click(),
-                    )
-                    .on_hover_text("Sidebar  S");
-                let ink = if toggle.hovered() {
-                    pal.text
-                } else {
-                    pal.muted
-                };
-                let p = ui.painter();
-                p.rect_stroke(icon, 2.0, Stroke::new(1.2, ink), egui::StrokeKind::Inside);
-                let split = icon.right() - 6.0;
-                p.line_segment(
-                    [
-                        egui::pos2(split, icon.top()),
-                        egui::pos2(split, icon.bottom()),
-                    ],
-                    Stroke::new(1.2, ink),
-                );
-                if toggle.clicked() {
-                    let ctx = ui.ctx().clone();
-                    self.act(&ctx, Action::ToggleSidebar);
-                }
-                p.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "Caturankam",
-                    medium(13.0),
-                    pal.text,
-                );
-            });
-    }
-
     /// Elsewhere (until those platforms get native menus): an in-window bar.
     #[cfg(not(target_os = "macos"))]
     fn top_bar(&mut self, ui: &mut egui::Ui) {
@@ -734,6 +678,13 @@ impl App {
             .resizable(false)
             .show_separator_line(false)
             .show(ui, |ui| {
+                let ctx = ui.ctx().clone();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if button(ui, &pal, "Hide sidebar", Some("S"), Kind::Secondary).clicked() {
+                        self.act(&ctx, Action::ToggleSidebar);
+                    }
+                });
+                ui.add_space(6.0);
                 self.account_row(ui);
                 match &self.play {
                     Play::Local => self.local_panel(ui),
@@ -996,6 +947,7 @@ impl App {
         let pal = self.pal;
         let field = ui.max_rect();
         style::hatch(ui.painter(), field, pal.line);
+        self.show_sidebar_hint(ui);
 
         let online = self.online().is_some();
         // Just enough room for the frame and its crop-mark overshoot.
@@ -1042,6 +994,38 @@ impl App {
             } else {
                 self.play_move(i.from, i.to, None, !i.dragged, now);
             }
+        }
+    }
+
+    /// Right after the sidebar is hidden, a "Show sidebar [S]" button teaches
+    /// the way back, then fades out. S and View ▸ Show Sidebar always work.
+    fn show_sidebar_hint(&mut self, ui: &mut egui::Ui) {
+        let Some(at) = self.sidebar_hidden_at.filter(|_| !self.sidebar_visible()) else {
+            return;
+        };
+        let age = ui.input(|i| i.time) - at;
+        let opacity = (1.0 - (age - HINT_SECS) / HINT_FADE_SECS).clamp(0.0, 1.0) as f32;
+        if opacity == 0.0 {
+            self.sidebar_hidden_at = None;
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        // Repaint only while the hint is on screen: at its fade-out start, then per frame.
+        if age < HINT_SECS {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(HINT_SECS - age));
+        } else {
+            ctx.request_repaint();
+        }
+        let pal = self.pal;
+        let clicked = egui::Area::new("show-sidebar".into())
+            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-12.0, 12.0))
+            .show(&ctx, |ui| {
+                ui.multiply_opacity(opacity);
+                button(ui, &pal, "Show sidebar", Some("S"), Kind::Secondary).clicked()
+            })
+            .inner;
+        if clicked {
+            self.act(&ctx, Action::ToggleSidebar);
         }
     }
 
@@ -1255,6 +1239,7 @@ impl eframe::App for App {
         }
         self.keys(&ctx);
 
+        #[cfg(not(target_os = "macos"))]
         self.top_bar(ui);
         if self.sidebar_visible() {
             self.side_panel(ui);
@@ -1267,6 +1252,9 @@ impl eframe::App for App {
         self.toast(&ctx);
         self.promotion_picker(&ctx, now);
         self.appearance_window(&ctx);
+        if let Some(d) = &mut self.demo {
+            d.frame(&ctx);
+        }
     }
 }
 

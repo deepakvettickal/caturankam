@@ -15,6 +15,9 @@ pub struct Settings {
     pub board: Option<String>,
     pub sidebar_hidden: bool,
     pub dark: bool,
+    /// Never written to disk (demo mode for screenshots and benchmarks).
+    #[serde(skip)]
+    pub ephemeral: bool,
 }
 
 impl Settings {
@@ -31,6 +34,9 @@ impl Settings {
     }
 
     pub fn save(&self) {
+        if self.ephemeral {
+            return;
+        }
         let Some(path) = Self::path() else { return };
         if let (Some(dir), Ok(text)) = (path.parent(), toml::to_string(self)) {
             let _ = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(path, text));
@@ -50,6 +56,7 @@ mod tests {
             board: None,
             sidebar_hidden: true,
             dark: true,
+            ephemeral: false,
         };
         assert_eq!(
             toml::from_str::<Settings>(&toml::to_string(&s).unwrap()).unwrap(),

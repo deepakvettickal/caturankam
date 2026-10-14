@@ -121,7 +121,9 @@ pub fn apply(ctx: &egui::Context, pal: &Pal) {
     v.window_fill = pal.surface;
     v.extreme_bg_color = pal.surface;
     v.faint_bg_color = pal.bg;
-    v.override_text_color = Some(pal.text);
+    // Not `override_text_color`: that would also force text on selected items
+    // (the highlighter), where it must be `selection.stroke` instead.
+    v.override_text_color = None;
     v.weak_text_color = Some(pal.muted);
     v.selection.bg_fill = pal.accent;
     // Text on the highlighter stays dark in both modes.

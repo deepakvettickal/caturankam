@@ -149,6 +149,8 @@ impl App {
         let settings = match &demo {
             Some(d) => Settings {
                 dark: d.dark,
+                piece_set: d.pieces.clone(),
+                board: d.board.clone(),
                 ephemeral: true,
                 ..Settings::default()
             },
@@ -182,10 +184,13 @@ impl App {
             sidebar_hidden_at: None,
             title: String::new(),
         };
-        if let Some(d) = &app.demo
-            && let Ok((game, _)) = Game::from_uci("startpos", &d.moves)
-        {
-            app.local = game;
+        if let Some(d) = &app.demo {
+            if let Ok((game, _)) = Game::from_uci("startpos", &d.moves) {
+                app.local = game;
+            }
+            if let Some(user) = &d.user {
+                app.account = Account::LoggedIn(user.clone());
+            }
         }
         app.apply_appearance(ctx);
         app.apply_mode(ctx);
@@ -691,12 +696,18 @@ impl App {
                     }
                 });
                 ui.add_space(6.0);
-                self.account_row(ui);
-                match &self.play {
-                    Play::Local => self.local_panel(ui),
-                    Play::Seeking { .. } => self.seeking_panel(ui),
-                    Play::Online(_) => self.online_panel(ui),
-                }
+                // Scrolls when the window is too short for the lobby.
+                egui::ScrollArea::vertical()
+                    .id_salt("sidebar")
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        self.account_row(ui);
+                        match &self.play {
+                            Play::Local => self.local_panel(ui),
+                            Play::Seeking { .. } => self.seeking_panel(ui),
+                            Play::Online(_) => self.online_panel(ui),
+                        }
+                    });
             });
     }
 
@@ -1233,7 +1244,7 @@ impl eframe::App for App {
         self.promotion_picker(&ctx, now);
         self.appearance_window(&ctx);
         if let Some(d) = &mut self.demo {
-            d.frame(&ctx);
+            d.frame(&ctx, !self.assets.downloading());
         }
     }
 }

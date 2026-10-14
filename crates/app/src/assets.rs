@@ -235,6 +235,10 @@ impl Assets {
         self.pending.remove(url);
     }
 
+    pub fn downloading(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     fn complete_set(&mut self, set: &str) {
         let Some(files) = self.partial.get(set) else {
             return;

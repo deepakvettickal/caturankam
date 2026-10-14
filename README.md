@@ -6,16 +6,11 @@ A super-lightweight native chess client for Lichess, written in Rust. No browser
 no Electron. Caturankam (சதுரங்கம்) is the Tamil name for chaturanga, chess's ancient
 Indian ancestor.
 
-> **Saying it:** four short syllables, *sa · thu · rang · gam*. The *c* is a soft *s*
-> (Tamil ச), the *th* is a soft dental *t* (tongue touching the teeth, as in Tamil or
-> Spanish), and the *r* is a single flick of the tongue.
-
 Caturankam for Lichess is an independent project, not an official Lichess app.
 
-<p align="center">
-  <img src="docs/screenshots/light.png" width="49%" alt="Caturankam in light mode: a stone-coloured board mid-game, with a sidebar showing the moves and a Log in with Lichess button">
-  <img src="docs/screenshots/dark.png" width="49%" alt="Caturankam in dark mode: the same position with the dark palette">
-</p>
+![Caturankam in light mode: Lichess totoy pieces on the marble board, mid-game, with the sidebar showing the moves and a Log in with Lichess button](docs/screenshots/light.png)
+
+![Caturankam in dark mode: Lichess minimal-warmth pieces on the newspaper board, same position](docs/screenshots/dark.png)
 
 ## What it does
 

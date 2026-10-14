@@ -9,6 +9,18 @@ use serde::{Deserialize, Deserializer};
 /// Built-in default, compiled into the binary so the app always starts.
 pub const ORIGINAL: &str = include_str!("../../../themes/original/theme.toml");
 
+/// Piece file names (`<name>.svg` in the theme's piece set), in the order
+/// [`Theme::pieces`] stores them: white then black, K Q R B N P.
+pub const PIECES: [&str; 12] = [
+    "wK", "wQ", "wR", "wB", "wN", "wP", "bK", "bQ", "bR", "bB", "bN", "bP",
+];
+
+macro_rules! original_pieces {
+    ($($name:literal),*) => {
+        [$(include_bytes!(concat!("../../../themes/original/pieces/", $name, ".svg")).as_slice()),*]
+    };
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("invalid theme manifest: {0}")]
@@ -21,6 +33,20 @@ pub struct Theme {
     pub id: String,
     pub board: Board,
     pub animation: Animation,
+    pub ui: Ui,
+    /// SVG bytes in [`PIECES`] order. Filled by the loader, not the manifest.
+    // shortcut: built-in themes only; becomes owned bytes when themes load from disk.
+    #[serde(skip)]
+    pub pieces: [&'static [u8]; 12],
+}
+
+/// Window chrome around the board.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Ui {
+    pub background: Rgb,
+    pub panel: Rgb,
+    pub text: Rgb,
+    pub accent: Rgb,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -70,7 +96,12 @@ impl Theme {
     }
 
     pub fn original() -> Self {
-        Self::parse(ORIGINAL).expect("built-in Original theme is valid")
+        Theme {
+            pieces: original_pieces!(
+                "wK", "wQ", "wR", "wB", "wN", "wP", "bK", "bQ", "bR", "bB", "bN", "bP"
+            ),
+            ..Self::parse(ORIGINAL).expect("built-in Original theme is valid")
+        }
     }
 }
 
@@ -84,6 +115,11 @@ mod tests {
         assert_eq!(t.id, "original");
         assert_eq!(t.board.light, Rgb([0xF0, 0xD9, 0xB5]));
         assert_eq!(t.board.coordinates, Coordinates::Subtle);
+        assert!(
+            t.pieces
+                .iter()
+                .all(|svg| svg.starts_with(b"<?xml") || svg.starts_with(b"<svg"))
+        );
     }
 
     #[test]

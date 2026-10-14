@@ -8,5 +8,14 @@ dark  = "#B58863"
 highlight = "#CDD26A"   # selected square and last move
 coordinates = "subtle"  # none | subtle
 
+[pieces]
+set = "pieces/"         # wK.svg ... bP.svg (Cburnett, BSD-3-Clause, see ASSETS.md)
+
 [animation]
 move_ms = 200
+
+[ui]
+background = "#161512"
+panel = "#262421"
+text = "#BABABA"
+accent = "#629924"

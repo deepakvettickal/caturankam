@@ -9,3 +9,4 @@ license.workspace = true
 caturankam-core.workspace = true
 caturankam-theme.workspace = true
 eframe.workspace = true
+egui_extras.workspace = true  # SVG piece rendering (resvg)

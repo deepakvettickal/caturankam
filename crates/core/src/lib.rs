@@ -1,6 +1,9 @@
 //! Game model on top of shakmaty. No I/O, no UI.
 
-use shakmaty::{CastlingMode, Chess, Move, Position, fen::Fen, san::SanPlus, uci::UciMove};
+use shakmaty::{
+    Bitboard, CastlingMode, CastlingSide, Chess, Move, Position, attacks, fen::Fen, san::SanPlus,
+    uci::UciMove,
+};
 
 pub use shakmaty::{Board, Color, File, KnownOutcome, Outcome, Piece, Rank, Role, Square};
 
@@ -27,6 +30,10 @@ pub struct MoveEvent {
 
 #[derive(Debug, Clone, Default)]
 pub struct Game {
+    /// Where the game started, so earlier positions can be rebuilt.
+    initial: Chess,
+    /// Every move played, in order.
+    moves: Vec<Move>,
     position: Chess,
     last_move: Option<(Square, Square)>,
     /// Moves played so far, in SAN (e.g. `e4`, `Nxf7+`, `O-O`).
@@ -37,10 +44,11 @@ pub struct Game {
 impl Game {
     pub fn from_fen(fen: &str) -> Result<Self, Error> {
         let fen: Fen = fen.parse().map_err(|e| Error::Fen(format!("{e}")))?;
-        let position = fen
+        let position: Chess = fen
             .into_position(CastlingMode::Standard)
             .map_err(|e| Error::Fen(e.to_string()))?;
         Ok(Self {
+            initial: position.clone(),
             position,
             ..Self::default()
         })
@@ -81,6 +89,65 @@ impl Game {
 
     pub fn ply(&self) -> usize {
         self.san.len()
+    }
+
+    /// The game as it stood after `ply` moves (clamped to the moves played),
+    /// for stepping back through history.
+    pub fn at(&self, ply: usize) -> Game {
+        let mut game = Game {
+            initial: self.initial.clone(),
+            position: self.initial.clone(),
+            ..Game::default()
+        };
+        for &m in self.moves.iter().take(ply) {
+            game.apply(m);
+        }
+        game
+    }
+
+    /// Where the piece on `from` could go on its owner's next turn, for a
+    /// premove: its movement pattern, ignoring other pieces (they may move),
+    /// except that it can't land on its own side's pieces. A premove is
+    /// checked for real legality only when it's played.
+    pub fn premove_targets(&self, from: Square) -> Vec<Square> {
+        let board = self.board();
+        let Some(piece) = board.piece_at(from) else {
+            return Vec::new();
+        };
+        let mut squares = match piece.role {
+            Role::Pawn => {
+                let forward = if piece.color == Color::White { 8 } else { -8 };
+                let mut push = Bitboard::EMPTY;
+                if let Some(one) = from.offset(forward) {
+                    push.add(one);
+                    if from.rank() == piece.color.relative_rank(Rank::Second)
+                        && let Some(two) = one.offset(forward)
+                    {
+                        push.add(two);
+                    }
+                }
+                push | attacks::pawn_attacks(piece.color, from)
+            }
+            Role::King => {
+                let mut squares = attacks::king_attacks(from);
+                let castles = self.position.castles();
+                let home = Square::from_coords(File::E, piece.color.backrank());
+                if from == home {
+                    for (side, file) in [
+                        (CastlingSide::KingSide, File::G),
+                        (CastlingSide::QueenSide, File::C),
+                    ] {
+                        if castles.has(piece.color, side) {
+                            squares.add(Square::from_coords(file, piece.color.backrank()));
+                        }
+                    }
+                }
+                squares
+            }
+            _ => attacks::attacks(from, piece, Bitboard::EMPTY),
+        };
+        squares &= !board.by_color(piece.color);
+        squares.into_iter().collect()
     }
 
     pub fn board(&self) -> &Board {
@@ -134,19 +201,30 @@ impl Game {
         promotion: Option<Role>,
     ) -> Result<MoveEvent, Error> {
         let m = self.find(from, to, promotion).ok_or(Error::IllegalMove)?;
-        let piece = self.board().piece_at(from).ok_or(Error::IllegalMove)?;
+        self.board().piece_at(from).ok_or(Error::IllegalMove)?;
+        Ok(self.apply(m))
+    }
+
+    /// Plays a move already known to be legal.
+    fn apply(&mut self, m: Move) -> MoveEvent {
+        let from = m.from().expect("standard chess moves have an origin");
+        let piece = self
+            .board()
+            .piece_at(from)
+            .expect("a legal move moves a piece");
         let to = landing(m);
         self.last_uci = Some(m.to_uci(CastlingMode::Standard).to_string());
         let san = SanPlus::from_move_and_play_unchecked(&mut self.position, m);
         self.san.push(san.to_string());
+        self.moves.push(m);
         self.last_move = Some((from, to));
-        Ok(MoveEvent {
+        MoveEvent {
             from,
             to,
             piece,
             capture: m.is_capture(),
             check: self.position.is_check(),
-        })
+        }
     }
 
     fn find(&self, from: Square, to: Square, promotion: Option<Role>) -> Option<Move> {
@@ -249,6 +327,47 @@ mod tests {
             Game::from_uci("startpos", "zz"),
             Err(Error::Uci(_))
         ));
+    }
+
+    #[test]
+    fn steps_back_through_history() {
+        let (g, _) = Game::from_uci("startpos", "e2e4 e7e5 g1f3").unwrap();
+        let start = g.at(0);
+        assert_eq!(start.ply(), 0);
+        assert_eq!(start.board(), Game::default().board());
+        assert!(start.last_move().is_none());
+        let two = g.at(2);
+        assert_eq!(two.san_moves(), ["e4", "e5"]);
+        assert_eq!(two.last_move(), Some((E7, E5)));
+        assert_eq!(g.at(99).ply(), 3); // clamped
+        // From a FEN start, history replays from that FEN.
+        let fen = "8/P7/8/8/8/8/8/k6K w - - 0 1";
+        let (g, _) = Game::from_uci(fen, "a7a8q").unwrap();
+        assert_eq!(
+            g.at(0).board().piece_at(A7).map(|p| p.role),
+            Some(Role::Pawn)
+        );
+    }
+
+    #[test]
+    fn premove_targets_follow_movement_patterns() {
+        let mut g = Game::default();
+        g.play(E2, E4, None).unwrap(); // black to move; white premoves
+        // Knight: its pattern, minus own pieces.
+        assert_eq!(g.premove_targets(G1), vec![E2, F3, H3]); // e2 is free after e4
+        // Bishop through its own pawn's old square: blockers are ignored...
+        assert!(g.premove_targets(F1).contains(&A6));
+        // ...but it can't land on its own pieces.
+        assert!(!g.premove_targets(F1).contains(&G2));
+        // Pawn: pushes and both diagonals (a piece may arrive there).
+        assert_eq!(g.premove_targets(D2), vec![C3, D3, E3, D4]);
+        // A pawn that has moved can't double-push.
+        assert_eq!(g.premove_targets(E4), vec![D5, E5, F5]);
+        // Castling squares while rights remain (black to move, white premoves).
+        let castle = Game::from_fen("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1").unwrap();
+        assert!(castle.premove_targets(E1).contains(&G1));
+        assert!(castle.premove_targets(E1).contains(&C1));
+        assert!(castle.premove_targets(B5).is_empty()); // empty square
     }
 
     #[test]

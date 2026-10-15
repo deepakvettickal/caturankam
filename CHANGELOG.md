@@ -6,34 +6,31 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-15
+
 ### Added
 
 - **Watch live:** follow the game on Lichess TV from the sidebar (**W**), with the
-  players' titles, ratings and clocks. When it ends, the next one starts on its own.
-  No login needed, and nothing connects until you press it.
+  players' titles (GM, IM…), ratings and clocks. When it ends, the next one starts on its
+  own. No login needed, and nothing connects until you press it.
+- **Material lead:** `+4` beside the player who is ahead, in your games and on TV, as on
+  Lichess. Players' titles show in your games too.
+
 ### Changed
 
+- **A new app icon:** a rook drawn as a pencil construction sketch on graph paper, with a
+  plain silhouette at the smallest sizes so it stays sharp in Finder and menus.
 - **Installing is smoother.** Homebrew installs open without the macOS security prompt,
   and the README gives a one-line command for the DMG. Releases are signed with a stable
   certificate, so the Keychain no longer asks again after each update.
-### Added
-
-- **Material lead** in online games: `+4` beside the player who is ahead, as on Lichess.
-
-### Changed
-
-- The local game says **Move a piece to begin** before the first move, in smaller type.
 - **Menu shortcuts match the sidebar's keys:** ⌘S sidebar, ⌘T light/dark, ⌘R randomize,
   ⌘F flip. **View ▸ Dark Mode** replaces the Appearance submenu.
+- The local game says **Move a piece to begin** before the first move, in smaller type.
 
 ### Removed
 
 - **Game ▸ New Local Game** (the sidebar's **N** still starts one), and **View ▸ Show Tab
   Bar**, which macOS added on its own.
-### Changed
-
-- **A new app icon:** a rook drawn as a pencil construction sketch on graph paper, with a
-  plain silhouette at the smallest sizes so it stays sharp in Finder and menus.
 
 ## [1.0.0] - 2026-10-14
 
@@ -66,5 +63,6 @@ The first release: a native Mac chess client for Lichess, in the **Original** mo
 - The app no longer quits unexpectedly when its window is closed on Macs with a
   Touch Bar (an AppKit bug).
 
-[Unreleased]: https://github.com/deepakvettickal/caturankam/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/deepakvettickal/caturankam/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/deepakvettickal/caturankam/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/deepakvettickal/caturankam/releases/tag/v1.0.0

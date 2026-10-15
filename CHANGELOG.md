@@ -6,6 +6,21 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Material lead** in online games: `+4` beside the player who is ahead, as on Lichess.
+
+### Changed
+
+- The local game says **Move a piece to begin** before the first move, in smaller type.
+- **Menu shortcuts match the sidebar's keys:** ⌘S sidebar, ⌘T light/dark, ⌘R randomize,
+  ⌘F flip. **View ▸ Dark Mode** replaces the Appearance submenu.
+
+### Removed
+
+- **Game ▸ New Local Game** (the sidebar's **N** still starts one), and **View ▸ Show Tab
+  Bar**, which macOS added on its own.
+
 ## [1.0.0] - 2026-10-14
 
 The first release: a native Mac chess client for Lichess, in the **Original** mode.

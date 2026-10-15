@@ -1007,7 +1007,7 @@ impl App {
                 self.act(&ctx, Action::NewGame);
             }
         });
-        ui.label(RichText::new(headline).font(medium(22.0)));
+        ui.label(RichText::new(headline).font(medium(14.0)));
         ui.add_space(4.0);
         history_hint(ui, &pal, self.viewing, self.local.ply());
         let current = self.viewing.unwrap_or(self.local.ply());
@@ -1644,6 +1644,10 @@ fn local_status(game: &Game) -> (String, &'static str) {
         }
         Outcome::Known(KnownOutcome::Draw) => ("Draw".into(), "Game over"),
         Outcome::Unknown if game.is_check() => (format!("{} to move", side(game.turn())), "Check"),
+        Outcome::Unknown if game.ply() == 0 => (
+            format!("Move a piece to begin – {} to move", side(game.turn())),
+            "Local game",
+        ),
         Outcome::Unknown => (format!("{} to move", side(game.turn())), "Local game"),
     }
 }
@@ -1661,6 +1665,10 @@ fn player_card(ui: &mut egui::Ui, pal: &Pal, g: &OnlineGame, c: Color, now: Inst
                     .font(mono(12.0))
                     .color(pal.muted),
             );
+        }
+        let lead = g.game.material_lead(c);
+        if lead > 0 {
+            ui.label(RichText::new(format!("+{lead}")).font(mono(12.0)));
         }
         let Some(left) = g.clock(c, now) else { return };
         let running = g.ticking() && g.game.turn() == c;

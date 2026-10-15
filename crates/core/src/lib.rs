@@ -154,6 +154,25 @@ impl Game {
         self.position.board()
     }
 
+    /// `c`'s material lead in pawns (P 1, N/B 3, R 5, Q 9), as Lichess shows
+    /// it beside a player; negative when behind.
+    pub fn material_lead(&self, c: Color) -> i32 {
+        let b = self.board();
+        let total = |c: Color| -> i32 {
+            [
+                (Role::Pawn, 1),
+                (Role::Knight, 3),
+                (Role::Bishop, 3),
+                (Role::Rook, 5),
+                (Role::Queen, 9),
+            ]
+            .into_iter()
+            .map(|(r, v)| (b.by_color(c) & b.by_role(r)).count() as i32 * v)
+            .sum()
+        };
+        total(c) - total(!c)
+    }
+
     pub fn turn(&self) -> Color {
         self.position.turn()
     }
@@ -247,6 +266,17 @@ fn landing(m: Move) -> Square {
 mod tests {
     use super::*;
     use Square::*;
+
+    #[test]
+    fn material_lead() {
+        assert_eq!(Game::default().material_lead(Color::White), 0);
+        let g = Game::from_fen("4k3/8/8/8/8/8/R7/4K3 w - - 0 1").unwrap();
+        assert_eq!(g.material_lead(Color::White), 5);
+        // A rook against a knight and a pawn: 5 - 3 - 1.
+        let g = Game::from_fen("4k3/7p/6n1/8/8/8/R7/4K3 w - - 0 1").unwrap();
+        assert_eq!(g.material_lead(Color::White), 1);
+        assert_eq!(g.material_lead(Color::Black), -1);
+    }
 
     #[test]
     fn opening_moves() {

@@ -8,11 +8,10 @@ use muda::accelerator::Accelerator;
 use muda::{AboutMetadata, CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use std::sync::mpsc;
 
-/// ⇧⌘D for dark mode.
-const DARK_KEY: &str = "Shift+CmdOrCtrl+D";
-
-/// ⌃⌘S, the standard macOS sidebar toggle.
-const SIDEBAR_KEY: &str = "Control+Super+S";
+// Each menu shortcut is ⌘ plus the letter on the sidebar's matching chip.
+// Sound has none: ⌘M is the system's Minimize.
+const SIDEBAR_KEY: &str = "CmdOrCtrl+S";
+const DARK_KEY: &str = "CmdOrCtrl+T";
 
 /// What the menu currently shows; re-synced only when it changes.
 #[derive(Clone, PartialEq, Default)]
@@ -31,7 +30,6 @@ pub struct MenuBar {
     login: MenuItem,
     logout: MenuItem,
     sidebar: MenuItem,
-    light: CheckMenuItem,
     dark: CheckMenuItem,
     sound: CheckMenuItem,
     pieces: Vec<CheckMenuItem>,
@@ -74,13 +72,7 @@ impl MenuBar {
             ],
         );
 
-        let game = submenu(
-            "Game",
-            &[
-                &item("new", "New Local Game", Some("CmdOrCtrl+N")),
-                &item("flip", "Flip Board", Some("CmdOrCtrl+F")),
-            ],
-        );
+        let game = submenu("Game", &[&item("flip", "Flip Board", Some("CmdOrCtrl+F"))]);
 
         let login = item("login", "Log In with Lichess…", None);
         let logout = item("logout", "Log Out", None);
@@ -104,14 +96,13 @@ impl MenuBar {
                 )
                 .collect();
         let sidebar = item("sidebar", "Hide Sidebar", Some(SIDEBAR_KEY));
-        let light = CheckMenuItem::with_id("light", "Light", true, false, None);
-        let dark = CheckMenuItem::with_id("dark", "Dark", true, false, key(DARK_KEY));
+        let dark = CheckMenuItem::with_id("dark", "Dark Mode", true, false, key(DARK_KEY));
         let sound = CheckMenuItem::with_id("sound", "Sound", true, true, None);
         let view = submenu(
             "View",
             &[
                 &sidebar,
-                &submenu("Appearance", &[&light, &dark]),
+                &dark,
                 &sound,
                 &PredefinedMenuItem::separator(),
                 &submenu("Pieces", &pieces.iter().map(|i| i as _).collect::<Vec<_>>()),
@@ -133,6 +124,15 @@ impl MenuBar {
         );
         window.set_as_windows_menu_for_nsapp();
 
+        // No "Show Tab Bar" / "Show All Tabs" in View: one window, no tabs.
+        // SAFETY: a class method taking a BOOL, called on the main thread.
+        unsafe {
+            let _: () = objc2::msg_send![
+                objc2::class!(NSWindow),
+                setAllowsAutomaticWindowTabbing: false
+            ];
+        }
+
         let menu = Menu::new();
         for sub in [&app, &game, &account, &view, &window] {
             menu.append(sub).expect("append top-level menu");
@@ -153,7 +153,6 @@ impl MenuBar {
             login,
             logout,
             sidebar,
-            light,
             dark,
             sound,
             pieces,
@@ -179,7 +178,6 @@ impl MenuBar {
         } else {
             "Hide Sidebar"
         });
-        self.light.set_checked(!state.dark);
         self.dark.set_checked(state.dark);
         self.sound.set_checked(!state.muted);
         let piece = format!("piece:{}", state.piece_set.as_deref().unwrap_or(""));
@@ -202,14 +200,12 @@ fn submenu(text: &str, items: &[&dyn muda::IsMenuItem]) -> Submenu {
 fn action(id: &str) -> Option<Action> {
     let name = |s: &str| (!s.is_empty()).then(|| s.to_string());
     Some(match id {
-        "new" => Action::NewGame,
         "flip" => Action::Flip,
         "login" => Action::Login,
         "logout" => Action::Logout,
         "random" => Action::Randomize,
         "sidebar" => Action::ToggleSidebar,
-        "light" => Action::Dark(false),
-        "dark" => Action::Dark(true),
+        "dark" => Action::ToggleDark,
         "sound" => Action::ToggleSound,
         _ => {
             if let Some(set) = id.strip_prefix("piece:") {
@@ -238,7 +234,7 @@ mod tests {
             Some(Action::Board(Some("wood4".into())))
         );
         assert_eq!(action("nonsense"), None);
-        assert_eq!(action("dark"), Some(Action::Dark(true)));
+        assert_eq!(action("dark"), Some(Action::ToggleDark));
         assert!(SIDEBAR_KEY.parse::<Accelerator>().is_ok());
         assert!(DARK_KEY.parse::<Accelerator>().is_ok());
     }

@@ -11,6 +11,24 @@ All notable changes to Caturankam. The format follows
 - **Installing is smoother.** Homebrew installs open without the macOS security prompt,
   and the README gives a one-line command for the DMG. Releases are signed with a stable
   certificate, so the Keychain no longer asks again after each update.
+### Added
+
+- **Material lead** in online games: `+4` beside the player who is ahead, as on Lichess.
+
+### Changed
+
+- The local game says **Move a piece to begin** before the first move, in smaller type.
+- **Menu shortcuts match the sidebar's keys:** ⌘S sidebar, ⌘T light/dark, ⌘R randomize,
+  ⌘F flip. **View ▸ Dark Mode** replaces the Appearance submenu.
+
+### Removed
+
+- **Game ▸ New Local Game** (the sidebar's **N** still starts one), and **View ▸ Show Tab
+  Bar**, which macOS added on its own.
+### Changed
+
+- **A new app icon:** a rook drawn as a pencil construction sketch on graph paper, with a
+  plain silhouette at the smallest sizes so it stays sharp in Finder and menus.
 
 ## [1.0.0] - 2026-10-14
 

@@ -14,20 +14,23 @@ Caturankam for Lichess is an independent project, not an official Lichess app.
 
 ## Install
 
-**[Download the latest release](https://github.com/deepakvettickal/caturankam/releases/latest)**
-(`Caturankam-x.y.z.dmg`), open it, and drag **Caturankam** to **Applications**.
 Needs macOS 11 or later; runs natively on Apple Silicon and Intel.
 
-Or with [Homebrew](https://brew.sh), straight from this repository:
+**With [Homebrew](https://brew.sh) (recommended).** Opens straight away, with no
+security warning:
 
 ```sh
 brew tap deepakvettickal/caturankam https://github.com/deepakvettickal/caturankam
 brew install --cask caturankam
 ```
 
-**First launch.** Releases aren't notarized by Apple, so macOS blocks a downloaded
-app the first time. Homebrew installs skip this, and so do builds from source. For the
-DMG, run this once after dragging the app to Applications:
+Update with `brew upgrade --cask caturankam`.
+
+**Or download the app.** Get `Caturankam-x.y.z.dmg` from the
+**[latest release](https://github.com/deepakvettickal/caturankam/releases/latest)**,
+open it, and drag **Caturankam** to **Applications**. Releases aren't notarized by
+Apple (that needs a paid developer account), so macOS blocks a downloaded app the first
+time. Run this once to allow it:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Caturankam.app
@@ -36,9 +39,9 @@ xattr -dr com.apple.quarantine /Applications/Caturankam.app
 Or open Caturankam, choose **Done** when macOS says it can't be verified, then click
 **Open Anyway** next to Caturankam in **System Settings ▸ Privacy & Security**.
 
-macOS may also ask to let Caturankam use your Keychain, where your Lichess login is
-stored; choose **Always Allow**. Releases are signed with the same certificate, so it
-doesn't ask again after updates.
+**Keychain.** macOS may ask to let Caturankam use your Keychain, where your
+Lichess login is stored; choose **Always Allow**. Releases are signed with the same
+certificate, so it doesn't ask again after updates.
 
 ## What it does
 

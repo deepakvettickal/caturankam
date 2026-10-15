@@ -60,7 +60,8 @@ fn main() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Caturankam")
         .with_inner_size([1040.0, 760.0])
-        .with_min_inner_size([720.0, 480.0]);
+        .with_min_inner_size([720.0, 480.0])
+        .with_icon(dock_icon());
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -70,6 +71,21 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))),
     )
+}
+
+/// The Dock icon set at runtime. Left empty, eframe would put egui's logo
+/// there, over the bundle's own icon; empty `IconData` means "don't set
+/// one", so the `.app` shows its `.icns`, sharp at every size. Dev builds
+/// (`cargo run`) have no bundle, so they set ours; release builds don't
+/// carry the image.
+fn dock_icon() -> egui::IconData {
+    #[cfg(debug_assertions)]
+    if let Ok(icon) =
+        eframe::icon_data::from_png_bytes(include_bytes!("../../../packaging/macos/icon-1024.png"))
+    {
+        return icon;
+    }
+    egui::IconData::default()
 }
 
 /// Something the user asked for: from a button, a key, or the menu bar.

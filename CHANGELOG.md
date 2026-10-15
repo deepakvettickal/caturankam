@@ -6,8 +6,6 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-10-15
-
 ### Changed
 
 - **A new app icon:** a rook drawn as a pencil construction sketch on graph paper, with a
@@ -44,6 +42,5 @@ The first release: a native Mac chess client for Lichess, in the **Original** mo
 - The app no longer quits unexpectedly when its window is closed on Macs with a
   Touch Bar (an AppKit bug).
 
-[Unreleased]: https://github.com/deepakvettickal/caturankam/compare/v1.0.1...HEAD
-[1.0.1]: https://github.com/deepakvettickal/caturankam/compare/v1.0.0...v1.0.1
+[Unreleased]: https://github.com/deepakvettickal/caturankam/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/deepakvettickal/caturankam/releases/tag/v1.0.0

@@ -6,6 +6,12 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Watch live:** follow the game on Lichess TV from the sidebar (**W**), with the
+  players' titles, ratings and clocks. When it ends, the next one starts on its own.
+  No login needed, and nothing connects until you press it.
+
 ## [1.0.0] - 2026-10-14
 
 The first release: a native Mac chess client for Lichess, in the **Original** mode.

@@ -1,5 +1,6 @@
 //! Thin Lichess client for the endpoints Caturankam uses: OAuth login, account,
-//! preferences, the event and Board game streams, seeks, AI challenges and moves.
+//! preferences, the event and Board game streams, seeks, AI challenges, moves,
+//! and the public Lichess TV feed.
 //! Pure async I/O: no UI, no threads of its own.
 
 pub mod auth;
@@ -433,6 +434,56 @@ impl Client {
     }
 }
 
+/// `/api/tv/feed`: the game featured on Lichess TV. A `Featured` starts each
+/// game (the next one follows on the same stream when it ends), then a `Fen`
+/// arrives after every move. Other message types fail to parse and are skipped.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "t", content = "d", rename_all = "camelCase")]
+pub enum TvEvent {
+    Featured(TvFeatured),
+    Fen(TvFen),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TvFeatured {
+    pub id: String,
+    /// The side shown at the bottom: `white` or `black`.
+    pub orientation: String,
+    pub players: Vec<TvPlayer>,
+    pub fen: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TvPlayer {
+    pub color: String,
+    pub user: Option<TvUser>,
+    /// The Lichess computer's level, when it plays.
+    pub ai: Option<u8>,
+    pub rating: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct TvUser {
+    pub name: String,
+    /// GM, IM, FM, BOT…
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TvFen {
+    pub fen: String,
+    /// The move just played, in UCI.
+    pub lm: Option<String>,
+    /// Seconds left on White's and Black's clocks.
+    pub wc: Option<u32>,
+    pub bc: Option<u32>,
+}
+
+/// Streams Lichess TV (public, no auth) until the connection ends or fails.
+pub async fn stream_tv(http: &reqwest::Client, on: impl FnMut(TvEvent)) -> Result<(), Error> {
+    ndjson(send(http.get(format!("{LICHESS}/api/tv/feed"))).await?, on).await
+}
+
 /// Downloads a public asset (no auth).
 pub async fn fetch_asset(http: &reqwest::Client, url: &str) -> Result<Vec<u8>, Error> {
     Ok(send(http.get(url)).await?.bytes().await?.to_vec())
@@ -499,6 +550,33 @@ mod tests {
         buf.extend_from_slice(b":2}\n");
         assert_eq!(take_lines(&mut buf).len(), 1);
         assert!(buf.is_empty());
+    }
+
+    // Recorded from the live feed.
+    #[test]
+    fn parses_tv_feed() {
+        let featured = r#"{"t":"featured","d":{"id":"oujEPn9h","orientation":"black","players":[{"color":"white","user":{"name":"noBrainNoChance","id":"nobrainnochance"},"rating":2995,"seconds":60},{"color":"black","user":{"name":"indianstar","title":"GM","id":"indianstar"},"rating":3154,"seconds":60}],"fen":"2q1n1k1/1p4b1/3p4/p2P4/4p3/2PQBr2/P7/2KR3R w - - 0 25"}}"#;
+        let TvEvent::Featured(f) = serde_json::from_str(featured).unwrap() else {
+            panic!("expected featured")
+        };
+        assert_eq!(f.orientation, "black");
+        let black = f.players[1].user.as_ref().unwrap();
+        assert_eq!(
+            (black.name.as_str(), black.title.as_deref()),
+            ("indianstar", Some("GM"))
+        );
+        assert_eq!(f.players[0].user.as_ref().unwrap().title, None);
+        assert_eq!(f.players[1].rating, Some(3154));
+
+        let fen = r#"{"t":"fen","d":{"fen":"2q1n1k1/1p6/3p4/p2P4/4p3/2b1Br2/P2Q4/2KR3R w - - 0 26","lm":"g7c3","wc":24,"bc":42}}"#;
+        let TvEvent::Fen(m) = serde_json::from_str(fen).unwrap() else {
+            panic!("expected fen")
+        };
+        assert_eq!(
+            (m.lm.as_deref(), m.wc, m.bc),
+            (Some("g7c3"), Some(24), Some(42))
+        );
+        assert!(serde_json::from_str::<TvEvent>(r#"{"t":"newThing","d":{}}"#).is_err());
     }
 
     // Payloads from the Lichess API docs examples.

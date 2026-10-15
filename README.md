@@ -46,6 +46,8 @@ Version 1, in the **Original** mode. Zen, Chaos and Ancient modes come later.
   1–8, or challenge a friend (Blitz works with both). Accept challenges from others,
   premove, offer draws, resign, abort, and claim victory if your opponent leaves. It
   reconnects if the connection drops.
+- **Watch live:** the game on Lichess TV, with both players' titles, ratings and clocks.
+  When it ends, the next one starts on its own. No login needed.
 - **Step through any game** with the arrow keys, or click a move.
 - **Sounds** for moves, captures, check, and the start and end of a game. They're made in
   code, so there's nothing to download.
@@ -60,7 +62,7 @@ Every action has a single key, shown on its button. Menu items also have ⌘ sho
 
 | Where | Keys |
 |---|---|
-| Anywhere | **F** flip · **S** sidebar · **T** light/dark · **M** sound · **R** random pieces and board · **L** log in · **N** new local game |
+| Anywhere | **F** flip · **S** sidebar · **T** light/dark · **M** sound · **R** random pieces and board · **L** log in · **N** new local game · **W** watch live (again to stop) |
 | Moves | **← →** step back and forward · **↑** start · **↓** back to live |
 | Lobby | **1–5** quick pairing · **6–0, -** play the computer · **[ ]** computer level · **C** colour · **U** challenge a friend |
 | Challenges | **Y** accept · **Esc** decline (or withdraw yours) |

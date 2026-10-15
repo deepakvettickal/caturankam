@@ -6,6 +6,7 @@
 //! - `CATURANKAM_MOVES="e2e4 e7e5"`: moves to play on the local board.
 //! - `CATURANKAM_USER=name`: show the logged-in lobby as `name`, offline (nothing is
 //!   sent anywhere; for screenshots only).
+//! - `CATURANKAM_WATCH=1`: start watching Lichess TV (live from lichess.org).
 //! - `CATURANKAM_PIECES=chessnut`, `CATURANKAM_BOARD=wood4`: a Lichess piece set and board.
 //! - `CATURANKAM_SHOT=out.png`: capture the window once it has settled, then quit.
 //!
@@ -21,6 +22,7 @@ pub struct Demo {
     pub dark: bool,
     pub moves: String,
     pub user: Option<String>,
+    pub watch: bool,
     pub pieces: Option<String>,
     pub board: Option<String>,
     shot: Option<PathBuf>,
@@ -36,6 +38,7 @@ impl Demo {
             dark: var("CATURANKAM_DARK").is_some(),
             moves: var("CATURANKAM_MOVES").unwrap_or_default(),
             user: var("CATURANKAM_USER"),
+            watch: var("CATURANKAM_WATCH").is_some(),
             pieces: var("CATURANKAM_PIECES"),
             board: var("CATURANKAM_BOARD"),
             shot: var("CATURANKAM_SHOT").map(PathBuf::from),

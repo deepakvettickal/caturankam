@@ -15,6 +15,13 @@ cask "caturankam" do
 
   app "Caturankam.app"
 
+  # Releases aren't notarized by Apple, so macOS would block the first launch.
+  # Tapping this repository is the trust decision: clear the download flag.
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Caturankam.app"]
+  end
+
   zap trash: [
     "~/Library/Application Support/caturankam",
     "~/Library/Caches/caturankam",

@@ -3,8 +3,9 @@
 #
 #   packaging/macos/bundle.sh <binary> <output.app> <version>
 #
-# Set CODESIGN_IDENTITY to sign with a Developer ID (hardened runtime, ready
-# for notarization). Without it the app is ad-hoc signed: Apple Silicon won't
+# Set CODESIGN_IDENTITY to sign with a certificate (hardened runtime): a
+# Developer ID, ready for notarization, or a self-signed one, which gives the
+# app a stable identity across updates. Without it the app is ad-hoc signed: Apple Silicon won't
 # launch a completely unsigned app.
 #
 # Structure after spotifast's packaging/macos/bundle.sh (MIT).
@@ -26,14 +27,17 @@ sed -e "s/__VERSION__/$version/g" -e "s/__BUILD__/$build/g" \
     "$here/Info.plist" > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
-# The .icns is generated from the committed 1024 px PNG; iconutil only reads
-# these base sizes, each with an @2x.
+# The .icns is generated from the committed PNGs: the plain silhouette for 16
+# and 32 px (and their @2x), the full drawing above. iconutil only reads these
+# base sizes, each with an @2x.
 iconset="$(mktemp -d)/caturankam.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-    sips -z $size $size "$here/icon-1024.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    src="$here/icon-1024.png"
+    [ "$size" -le 32 ] && src="$here/icon-small-64.png"
+    sips -z $size $size "$src" --out "$iconset/icon_${size}x${size}.png" >/dev/null
     double=$((size * 2))
-    sips -z $double $double "$here/icon-1024.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+    sips -z $double $double "$src" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/caturankam.icns"
 

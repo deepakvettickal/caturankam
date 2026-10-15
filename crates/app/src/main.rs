@@ -1069,7 +1069,7 @@ impl App {
                 self.act(&ctx, Action::NewGame);
             }
         });
-        ui.label(RichText::new(headline).font(medium(22.0)));
+        ui.label(RichText::new(headline).font(medium(14.0)));
         ui.add_space(4.0);
         history_hint(ui, &pal, self.viewing, self.local.ply());
         let current = self.viewing.unwrap_or(self.local.ply());
@@ -1385,7 +1385,9 @@ impl App {
             };
             let title = p.user.as_ref().and_then(|u| u.title.as_deref());
             let running = g.ticking() && g.game.turn() == c;
-            player_row(ui, &pal, &name, title, p.rating, g.clock(c, now), running);
+            let clock = g.clock(c, now).map(|left| (left, running));
+            let lead = g.game.material_lead(c);
+            player_row(ui, &pal, &name, title, p.rating, lead, clock);
         };
         tv_row(ui, top);
         ui.add_space(4.0);
@@ -1781,6 +1783,10 @@ fn local_status(game: &Game) -> (String, &'static str) {
         }
         Outcome::Known(KnownOutcome::Draw) => ("Draw".into(), "Game over"),
         Outcome::Unknown if game.is_check() => (format!("{} to move", side(game.turn())), "Check"),
+        Outcome::Unknown if game.ply() == 0 => (
+            format!("Move a piece to begin – {} to move", side(game.turn())),
+            "Local game",
+        ),
         Outcome::Unknown => (format!("{} to move", side(game.turn())), "Local game"),
     }
 }
@@ -1792,26 +1798,21 @@ fn player_card(ui: &mut egui::Ui, pal: &Pal, g: &OnlineGame, c: Color, now: Inst
     let name = p.name.clone().unwrap_or_else(|| player_label(p));
     let rating = p.rating.filter(|_| p.ai_level.is_none());
     let running = g.ticking() && g.game.turn() == c;
-    player_row(
-        ui,
-        pal,
-        &name,
-        p.title.as_deref(),
-        rating,
-        g.clock(c, now),
-        running,
-    );
+    let clock = g.clock(c, now).map(|left| (left, running));
+    let lead = g.game.material_lead(c);
+    player_row(ui, pal, &name, p.title.as_deref(), rating, lead, clock);
 }
 
-/// Title (GM, IM…), name, rating and clock, as Lichess shows a player.
+/// Title (GM, IM…), name, rating, material lead and clock (with whether it's
+/// running), as Lichess shows a player.
 fn player_row(
     ui: &mut egui::Ui,
     pal: &Pal,
     name: &str,
     title: Option<&str>,
     rating: Option<u32>,
-    clock: Option<Duration>,
-    running: bool,
+    lead: i32,
+    clock: Option<(Duration, bool)>,
 ) {
     ui.horizontal(|ui| {
         if let Some(t) = title {
@@ -1827,7 +1828,10 @@ fn player_row(
                     .color(pal.muted),
             );
         }
-        let Some(left) = clock else { return };
+        if lead > 0 {
+            ui.label(RichText::new(format!("+{lead}")).font(mono(12.0)));
+        }
+        let Some((left, running)) = clock else { return };
         let red = Color32::from_rgb(190, 45, 35);
         let (fill, ink, border) = match (running, left.as_secs() < 10) {
             (true, true) => (red, style::ink_on(red), red),

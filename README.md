@@ -2,9 +2,14 @@
 
 `/sʌ.t̪ʊ.ɾʌŋ.ɡʌm/`
 
-A super-lightweight native chess client for Lichess, written in Rust. No browser engine,
-no Electron. Caturankam (சதுரங்கம்) is the Tamil name for chaturanga, chess's ancient
-Indian ancestor.
+A super-lightweight native chess client for Lichess, written in Rust.
+
+**The name.** Caturankam (சதுரங்கம்) is the Tamil word for chess. It comes from the
+Sanskrit *caturaṅga*, "having four limbs": *catur*, four, and *aṅga*, limb. In the
+Indian epics, the four limbs are the divisions of an army: elephants, chariots, cavalry
+and infantry. They became the bishop, rook, knight and pawn of
+[chaturanga](https://en.wikipedia.org/wiki/Chaturanga#Etymology), the ancient Indian
+game that chess grew from.
 
 Caturankam for Lichess is an independent project, not an official Lichess app.
 

@@ -6,6 +6,11 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Installing is smoother.** Homebrew installs open without the macOS security prompt,
+  and the README gives a one-line command for the DMG. Releases are signed with a stable
+  certificate, so the Keychain no longer asks again after each update.
 ### Added
 
 - **Material lead** in online games: `+4` beside the player who is ahead, as on Lichess.

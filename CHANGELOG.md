@@ -6,6 +6,11 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A new app icon:** a rook drawn as a pencil construction sketch on graph paper, with a
+  plain silhouette at the smallest sizes so it stays sharp in Finder and menus.
+
 ## [1.0.0] - 2026-10-14
 
 The first release: a native Mac chess client for Lichess, in the **Original** mode.

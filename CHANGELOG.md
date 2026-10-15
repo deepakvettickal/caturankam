@@ -18,14 +18,19 @@ All notable changes to Caturankam. The format follows
 
 ### Changed
 
-- **A new app icon:** a rook drawn as a pencil construction sketch on graph paper, with a
-  plain silhouette at the smallest sizes so it stays sharp in Finder and menus.
+- **A new app icon:** a solid black rook over a pencil construction sketch on graph paper,
+  with a plain silhouette at the smallest sizes so it stays sharp in Finder and menus.
 - **Installing is smoother.** Homebrew installs open without the macOS security prompt,
   and the README gives a one-line command for the DMG. Releases are signed with a stable
   certificate, so the Keychain no longer asks again after each update.
 - **Menu shortcuts match the sidebar's keys:** ⌘S sidebar, ⌘T light/dark, ⌘R randomize,
   ⌘F flip. **View ▸ Dark Mode** replaces the Appearance submenu.
 - The local game says **Move a piece to begin** before the first move, in smaller type.
+
+### Fixed
+
+- The Dock shows Caturankam's icon, not egui's logo.
+- No loading circle flashes over the board when the pieces or board change (**R**).
 
 ### Removed
 

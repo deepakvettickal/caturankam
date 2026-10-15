@@ -175,7 +175,10 @@ impl BoardView {
         let size = geo.square_size();
 
         if let Some(img) = look.board {
-            egui::Image::from_bytes(img.uri.clone(), img.bytes.clone()).paint_at(ui, geo.rect);
+            // No spinner while a new board decodes: the plain squares show until it's ready.
+            egui::Image::from_bytes(img.uri.clone(), img.bytes.clone())
+                .show_loading_spinner(false)
+                .paint_at(ui, geo.rect);
         }
 
         for sq in Square::ALL {
@@ -370,8 +373,9 @@ pub fn piece_image(set: &PieceSet, piece: Piece) -> egui::Image<'static> {
         Role::Pawn => 5,
     };
     let i = role + if piece.color == Color::White { 0 } else { 6 };
-    // The URI keys egui's raster cache, so each set has its own.
-    egui::Image::from_bytes(set.uris[i].clone(), set.svgs[i].clone())
+    // The URI keys egui's raster cache, so each set has its own. No spinner
+    // while a new set rasterises: it appears as soon as it's ready.
+    egui::Image::from_bytes(set.uris[i].clone(), set.svgs[i].clone()).show_loading_spinner(false)
 }
 
 fn rgb(c: Rgb) -> Color32 {

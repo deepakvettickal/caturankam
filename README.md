@@ -146,6 +146,7 @@ quits.
 - [x] Claim victory when the opponent leaves
 - [x] Step back through the move list during and after a game
 - [x] 5+0 against the computer
+- [x] Material lead (+N) beside the player who is ahead
 
 **Modes** (the point of the project)
 - [ ] Theme system: every visual and sound from a theme pack, loaded from disk

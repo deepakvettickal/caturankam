@@ -184,7 +184,7 @@ quits.
 - **[egui](https://github.com/emilk/egui)** and **[shakmaty](https://github.com/niklasf/shakmaty):**
   the UI toolkit and the chess rules underneath.
 - **[Cburnett's pieces](https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces):**
-  the built-in set, and the knight in the app icon.
+  the built-in set.
 
 ## Licence
 

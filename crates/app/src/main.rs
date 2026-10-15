@@ -10,11 +10,12 @@ mod online;
 mod settings;
 mod sound;
 mod style;
+mod tv;
 
 use assets::{Assets, BOARDS, Fetch, PIECE_SETS, PieceSet};
 use board::{BoardView, Look, piece_image};
 use caturankam_core::{Color, Game, KnownOutcome, Outcome, Piece, Role, Square};
-use caturankam_lichess::{GameEvent, Side};
+use caturankam_lichess::{GameEvent, Side, TvEvent};
 use caturankam_theme::Theme;
 use eframe::egui::{self, Color32, Key, Margin, Modifiers, RichText, Stroke, Vec2};
 use net::{Cmd, Evt, Net};
@@ -22,6 +23,7 @@ use online::{OnlineGame, format_clock, next_tick, player_label};
 use settings::Settings;
 use std::time::{Duration, Instant};
 use style::{Kind, Pal, button, kbd, medium, mono, muted, row, rule, section};
+use tv::TvGame;
 
 /// Rapid and Classical: the only real-time controls Lichess lets Board API
 /// clients seek. (minutes, increment), on keys 1–5.
@@ -116,6 +118,8 @@ pub enum Action {
     First,
     Live,
     View(usize),
+    /// W: start or stop watching Lichess TV.
+    Watch,
 }
 
 enum Account {
@@ -138,6 +142,8 @@ enum Play {
         challenge: Option<(String, Option<String>)>,
     },
     Online(Box<OnlineGame>),
+    /// Following Lichess TV; `None` until the first game arrives.
+    Watching(Option<Box<TvGame>>),
 }
 
 struct Lobby {
@@ -243,6 +249,9 @@ impl App {
             if let Some(user) = &d.user {
                 app.account = Account::LoggedIn(user.clone());
             }
+            if d.watch {
+                app.act(ctx, Action::Watch);
+            }
         }
         app.apply_appearance(ctx);
         app.apply_mode(ctx);
@@ -298,6 +307,7 @@ impl App {
     fn game(&self) -> &Game {
         match &self.play {
             Play::Online(g) => &g.game,
+            Play::Watching(Some(g)) => &g.game,
             _ => &self.local,
         }
     }
@@ -439,6 +449,7 @@ impl App {
             }
             Evt::IncomingGone(id) => self.incoming.retain(|c| c.id != id),
             Evt::Game(ev) => self.on_game_event(ctx, ev),
+            Evt::Tv(ev) => self.on_tv_event(ctx, ev),
             Evt::Fetched { url, bytes } => match bytes {
                 Ok(b) => self.assets.fetched(&url, b),
                 Err(e) => {
@@ -516,6 +527,38 @@ impl App {
                 }
             }
             GameEvent::Other => {}
+        }
+    }
+
+    /// Lichess TV: a new game replaces the old one (that's how the feed moves
+    /// on), and each move animates like an opponent's would.
+    fn on_tv_event(&mut self, ctx: &egui::Context, ev: TvEvent) {
+        let Play::Watching(watching) = &mut self.play else {
+            return; // stopped while this was on its way
+        };
+        let now = ctx.input(|i| i.time);
+        match ev {
+            TvEvent::Featured(f) => match TvGame::new(f) {
+                Ok(g) => {
+                    self.board.reset();
+                    self.board.flipped = g.bottom == Color::Black;
+                    self.viewing = None;
+                    *watching = Some(Box::new(g));
+                }
+                Err(e) => self.notify(ctx, format!("Couldn't load the TV game: {e}")),
+            },
+            TvEvent::Fen(m) => {
+                let Some(g) = watching else { return };
+                match g.update(&m) {
+                    Ok(Some(ev)) => {
+                        self.viewing = None;
+                        self.board.animate(&ev, now);
+                        self.play_sound(sound::Sound::for_move(&ev));
+                    }
+                    Ok(None) => self.viewing = None,
+                    Err(e) => self.notify(ctx, format!("Out of sync with Lichess TV: {e}")),
+                }
+            }
         }
     }
 
@@ -615,6 +658,8 @@ impl App {
                     self.local = Game::default();
                     self.board.reset();
                     self.promoting = None;
+                } else if matches!(self.play, Play::Watching(_)) {
+                    self.notify(ctx, "Stop watching first (W).");
                 } else {
                     self.notify(ctx, "Finish or leave the online game first.");
                 }
@@ -789,6 +834,21 @@ impl App {
                 accept: false,
             }),
             Action::Escape => self.confirm_resign = false,
+            Action::Watch => match self.play {
+                // The network thread starts here if nothing else needed it yet.
+                Play::Local => {
+                    self.net(ctx).send(Cmd::WatchTv);
+                    self.play = Play::Watching(None);
+                    self.board.reset();
+                    self.viewing = None;
+                    self.promoting = None;
+                }
+                Play::Watching(_) => {
+                    self.net(ctx).send(Cmd::StopTv);
+                    self.back_to_local();
+                }
+                _ => self.notify(ctx, "Finish the online game first."),
+            },
             Action::BackToLobby if self.online().is_some_and(|g| g.is_over()) => {
                 self.back_to_local();
             }
@@ -820,6 +880,7 @@ impl App {
             (Key::Y, Action::Accept),
             (Key::V, Action::ClaimVictory),
             (Key::U, Action::FocusFriend),
+            (Key::W, Action::Watch),
             (Key::Escape, Action::Escape),
             (Key::ArrowLeft, Action::Back),
             (Key::ArrowRight, Action::Forward),
@@ -939,6 +1000,7 @@ impl App {
                                     Play::Local => self.local_panel(ui),
                                     Play::Waiting { .. } => self.waiting_panel(ui),
                                     Play::Online(_) => self.online_panel(ui),
+                                    Play::Watching(_) => self.watch_panel(ui),
                                 }
                             });
                     });
@@ -1007,7 +1069,7 @@ impl App {
                 self.act(&ctx, Action::NewGame);
             }
         });
-        ui.label(RichText::new(headline).font(medium(22.0)));
+        ui.label(RichText::new(headline).font(medium(14.0)));
         ui.add_space(4.0);
         history_hint(ui, &pal, self.viewing, self.local.ply());
         let current = self.viewing.unwrap_or(self.local.ply());
@@ -1020,6 +1082,17 @@ impl App {
         if let Some(p) = viewed {
             self.act(&ctx, Action::View(p));
         }
+        rule(ui);
+
+        section(ui, &pal, "Watch live", |ui| {
+            if button(ui, &pal, "Watch", Some("W"), Kind::Secondary).clicked() {
+                self.act(&ctx, Action::Watch);
+            }
+        });
+        ui.label(muted(
+            &pal,
+            "The top game on Lichess right now, as on Lichess TV.",
+        ));
         rule(ui);
 
         if self.username().is_none() {
@@ -1283,6 +1356,57 @@ impl App {
         }
     }
 
+    /// Lichess TV: both players, their titles, ratings and clocks, the top
+    /// player first as on the board.
+    fn watch_panel(&mut self, ui: &mut egui::Ui) {
+        let pal = self.pal;
+        let ctx = ui.ctx().clone();
+        section(ui, &pal, "Watch live", |ui| {
+            if button(ui, &pal, "Stop", Some("W"), Kind::Secondary).clicked() {
+                self.act(&ctx, Action::Watch);
+            }
+        });
+        let Play::Watching(Some(g)) = &self.play else {
+            waiting(ui, "Tuning in to Lichess TV");
+            return;
+        };
+        let now = Instant::now();
+        let top = if self.board.flipped {
+            Color::White
+        } else {
+            Color::Black
+        };
+        let tv_row = |ui: &mut egui::Ui, c: Color| {
+            let p = g.player(c);
+            let name = match (&p.user, p.ai) {
+                (Some(u), _) => u.name.clone(),
+                (None, Some(level)) => format!("Stockfish level {level}"),
+                _ => "Anonymous".into(),
+            };
+            let title = p.user.as_ref().and_then(|u| u.title.as_deref());
+            let running = g.ticking() && g.game.turn() == c;
+            let clock = g.clock(c, now).map(|left| (left, running));
+            let lead = g.game.material_lead(c);
+            player_row(ui, &pal, &name, title, p.rating, lead, clock);
+        };
+        tv_row(ui, top);
+        ui.add_space(4.0);
+        let status = match g.game.outcome() {
+            Outcome::Known(KnownOutcome::Decisive { .. }) => "Checkmate · the next game follows",
+            Outcome::Known(KnownOutcome::Draw) => "Draw · the next game follows",
+            Outcome::Unknown if g.game.turn() == Color::White => "White to move",
+            Outcome::Unknown => "Black to move",
+        };
+        ui.label(muted(&pal, status));
+        ui.add_space(4.0);
+        tv_row(ui, !top);
+        ui.add_space(8.0);
+        ui.label(muted(
+            &pal,
+            "When this game ends, the next one starts here on its own.",
+        ));
+    }
+
     /// The board on a hatched field, inside a crop-mark frame. It always gets
     /// the full height: names and clocks live in the sidebar or window title.
     fn board_area(&mut self, ui: &mut egui::Ui, now: f64) {
@@ -1301,7 +1425,7 @@ impl App {
         let movable = match &self.play {
             _ if self.promoting.is_some() || self.viewing.is_some() => None,
             Play::Local => (self.local.outcome() == Outcome::Unknown).then(|| self.local.turn()),
-            Play::Waiting { .. } => None,
+            Play::Waiting { .. } | Play::Watching(_) => None,
             // Always our side in a live game: on the opponent's turn it's a premove.
             Play::Online(g) => (!g.is_over()).then_some(g.me),
         };
@@ -1314,8 +1438,11 @@ impl App {
                 .map_or(&self.builtin, |(_, s)| s),
             board: self.assets.board.as_ref().map(|(_, b)| b),
         };
+        // Matching on the field (not `self.game()`) borrows only `self.play`,
+        // leaving `self.board` free for the closure below.
         let live = match &self.play {
             Play::Online(g) => &g.game,
+            Play::Watching(Some(g)) => &g.game,
             _ => &self.local,
         };
         // Looking back: show the position then (a rebuilt copy; cheap).
@@ -1439,6 +1566,12 @@ impl App {
             if !self.sidebar_visible() {
                 title = game_title(g, now);
             }
+        }
+        if let Play::Watching(Some(g)) = &self.play
+            && g.ticking()
+        {
+            let left = g.clock(g.game.turn(), now).unwrap_or_default();
+            ctx.request_repaint_after(next_tick(left));
         }
         if title != self.title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -1612,7 +1745,13 @@ impl eframe::App for App {
         self.promotion_picker(&ctx, now);
         self.appearance_window(&ctx);
         if let Some(d) = &mut self.demo {
-            d.frame(&ctx, !self.assets.downloading());
+            // Watching: wait for a move, which brings the clocks.
+            let tuned_in = match &self.play {
+                Play::Watching(g) => g.as_ref().is_some_and(|g| g.ticking()),
+                _ => true,
+            };
+            let ready = !self.assets.downloading() && tuned_in;
+            d.frame(&ctx, ready);
         }
     }
 }
@@ -1644,6 +1783,10 @@ fn local_status(game: &Game) -> (String, &'static str) {
         }
         Outcome::Known(KnownOutcome::Draw) => ("Draw".into(), "Game over"),
         Outcome::Unknown if game.is_check() => (format!("{} to move", side(game.turn())), "Check"),
+        Outcome::Unknown if game.ply() == 0 => (
+            format!("Move a piece to begin – {} to move", side(game.turn())),
+            "Local game",
+        ),
         Outcome::Unknown => (format!("{} to move", side(game.turn())), "Local game"),
     }
 }
@@ -1652,18 +1795,43 @@ fn local_status(game: &Game) -> (String, &'static str) {
 /// the last ten seconds.
 fn player_card(ui: &mut egui::Ui, pal: &Pal, g: &OnlineGame, c: Color, now: Instant) {
     let p = g.player(c);
+    let name = p.name.clone().unwrap_or_else(|| player_label(p));
+    let rating = p.rating.filter(|_| p.ai_level.is_none());
+    let running = g.ticking() && g.game.turn() == c;
+    let clock = g.clock(c, now).map(|left| (left, running));
+    let lead = g.game.material_lead(c);
+    player_row(ui, pal, &name, p.title.as_deref(), rating, lead, clock);
+}
+
+/// Title (GM, IM…), name, rating, material lead and clock (with whether it's
+/// running), as Lichess shows a player.
+fn player_row(
+    ui: &mut egui::Ui,
+    pal: &Pal,
+    name: &str,
+    title: Option<&str>,
+    rating: Option<u32>,
+    lead: i32,
+    clock: Option<(Duration, bool)>,
+) {
     ui.horizontal(|ui| {
-        let name = p.name.clone().unwrap_or_else(|| player_label(p));
+        if let Some(t) = title {
+            // Lichess's title amber; readable on light and dark.
+            let amber = Color32::from_rgb(191, 129, 29);
+            ui.label(RichText::new(t).font(medium(14.0)).color(amber));
+        }
         ui.label(RichText::new(name).font(medium(14.0)));
-        if let Some(r) = p.rating.filter(|_| p.ai_level.is_none()) {
+        if let Some(r) = rating {
             ui.label(
                 RichText::new(r.to_string())
                     .font(mono(12.0))
                     .color(pal.muted),
             );
         }
-        let Some(left) = g.clock(c, now) else { return };
-        let running = g.ticking() && g.game.turn() == c;
+        if lead > 0 {
+            ui.label(RichText::new(format!("+{lead}")).font(mono(12.0)));
+        }
+        let Some((left, running)) = clock else { return };
         let red = Color32::from_rgb(190, 45, 35);
         let (fill, ink, border) = match (running, left.as_secs() < 10) {
             (true, true) => (red, style::ink_on(red), red),

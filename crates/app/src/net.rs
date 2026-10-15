@@ -5,7 +5,7 @@
 //! answers with `Evt`s, waking the UI with `request_repaint`. The egui thread
 //! never blocks on the network.
 
-use caturankam_lichess::{self as lichess, Client, Event, GameEvent, HttpClient, Side};
+use caturankam_lichess::{self as lichess, Client, Event, GameEvent, HttpClient, Side, TvEvent};
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -60,6 +60,9 @@ pub enum Cmd {
         id: String,
         accept: bool,
     },
+    /// Start or stop following Lichess TV (public: no login needed).
+    WatchTv,
+    StopTv,
     /// Download a public asset and save it to `cache`.
     Fetch {
         url: String,
@@ -87,6 +90,7 @@ pub enum Evt {
     /// An incoming challenge was withdrawn or answered elsewhere.
     IncomingGone(String),
     Game(GameEvent),
+    Tv(TvEvent),
     Fetched {
         url: String,
         bytes: Result<Vec<u8>, String>,
@@ -161,6 +165,7 @@ struct State {
     seek: Option<Owned>,
     challenge: Option<Owned>,
     login: Option<Owned>,
+    tv: Option<Owned>,
     session: UnboundedSender<SessionMsg>,
     out: Out,
 }
@@ -174,6 +179,7 @@ async fn run(mut cmds: UnboundedReceiver<Cmd>, out: Out) {
         seek: None,
         challenge: None,
         login: None,
+        tv: None,
         session,
         out,
     };
@@ -259,6 +265,8 @@ impl State {
                 }
                 out.send(Evt::LoggedOut { reason: None });
             }
+            Cmd::WatchTv => self.tv = Some(Owned(tokio::spawn(tv_loop(self.http.clone(), out)))),
+            Cmd::StopTv => self.tv = None,
             Cmd::Fetch { url, cache } => {
                 let http = self.http.clone();
                 tokio::spawn(async move {
@@ -350,7 +358,12 @@ impl State {
                     c.decline_challenge(&id).await
                 }
             }),
-            Cmd::Connect | Cmd::Login | Cmd::Logout | Cmd::Fetch { .. } => {
+            Cmd::Connect
+            | Cmd::Login
+            | Cmd::Logout
+            | Cmd::WatchTv
+            | Cmd::StopTv
+            | Cmd::Fetch { .. } => {
                 unreachable!("handled in State::handle")
             }
         }
@@ -476,6 +489,19 @@ async fn game_loop(c: Client, id: String, out: Out) {
             }) => return,
             _ => backoff.wait().await,
         }
+    }
+}
+
+/// Follows Lichess TV until stopped, reconnecting if the connection drops.
+async fn tv_loop(http: HttpClient, out: Out) {
+    let mut backoff = Backoff::default();
+    loop {
+        let _ = lichess::stream_tv(&http, |ev| {
+            backoff.reset();
+            out.send(Evt::Tv(ev));
+        })
+        .await;
+        backoff.wait().await;
     }
 }
 

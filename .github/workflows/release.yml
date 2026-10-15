@@ -26,13 +26,18 @@ jobs:
   macos:
     name: macOS universal app
     runs-on: macos-latest
+    # The signing secrets live in the "release" environment, which only v* tag
+    # runs may use; PR and manual dry runs get none and are ad-hoc signed.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     env:
-      # All optional. With the certificate secrets the app is signed with a
-      # Developer ID; with the Apple ID ones too, the DMG is also notarized.
+      # All optional. With the certificate secrets the app is signed with that
+      # certificate: today a self-signed one, which keeps the app's identity
+      # stable across updates (the Keychain doesn't ask again), or later a
+      # Developer ID. With the Apple ID ones too, the DMG is also notarized.
       # Without them the app is ad-hoc signed (see the README's install notes).
-      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      SIGNING_CERTIFICATE_P12: ${{ secrets.SIGNING_CERTIFICATE_P12 }}
+      SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+      SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -71,19 +76,19 @@ jobs:
           universal/caturankam --version
 
       - name: Signing keychain
-        if: env.APPLE_CERTIFICATE_P12 != ''
+        if: env.SIGNING_CERTIFICATE_P12 != ''
         run: |
           keychain="$RUNNER_TEMP/signing.keychain-db"
           password="$(openssl rand -hex 16)"
-          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          echo "$SIGNING_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$password" "$keychain"
-          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+          security import "$RUNNER_TEMP/cert.p12" -P "$SIGNING_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k "$keychain"
           security list-keychains -d user -s "$keychain"
           rm "$RUNNER_TEMP/cert.p12"
-          echo "CODESIGN_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "CODESIGN_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
       - name: App bundle and DMG
         run: |

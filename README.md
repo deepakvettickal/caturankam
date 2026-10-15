@@ -19,27 +19,34 @@ Caturankam for Lichess is an independent project, not an official Lichess app.
 
 ## Install
 
-**[Download the latest release](https://github.com/deepakvettickal/caturankam/releases/latest)**
-(`Caturankam-x.y.z.dmg`), open it, and drag **Caturankam** to **Applications**.
 Needs macOS 11 or later; runs natively on Apple Silicon and Intel.
 
-Or with [Homebrew](https://brew.sh), straight from this repository:
+**With [Homebrew](https://brew.sh) (recommended).** Opens straight away, with no
+security warning:
 
 ```sh
 brew tap deepakvettickal/caturankam https://github.com/deepakvettickal/caturankam
 brew install --cask caturankam
 ```
 
-**First launch.** Releases aren't notarized by Apple yet, so macOS blocks the app the
-first time:
+Update with `brew upgrade --cask caturankam`.
 
-1. Open Caturankam, and choose **Done** when macOS says it can't be verified.
-2. Open **System Settings ▸ Privacy & Security**, scroll down, and click **Open Anyway**
-   next to Caturankam. Confirm with **Open Anyway** and your password.
+**Or download the app.** Get `Caturankam-x.y.z.dmg` from the
+**[latest release](https://github.com/deepakvettickal/caturankam/releases/latest)**,
+open it, and drag **Caturankam** to **Applications**. Releases aren't notarized by
+Apple (that needs a paid developer account), so macOS blocks a downloaded app the first
+time. Run this once to allow it:
 
-You only do this once. macOS may also ask to let Caturankam use your Keychain, where
-your Lichess login is stored; choose **Always Allow**. It asks again after each update,
-until releases are signed.
+```sh
+xattr -dr com.apple.quarantine /Applications/Caturankam.app
+```
+
+Or open Caturankam, choose **Done** when macOS says it can't be verified, then click
+**Open Anyway** next to Caturankam in **System Settings ▸ Privacy & Security**.
+
+**Keychain.** macOS may ask to let Caturankam use your Keychain, where your
+Lichess login is stored; choose **Always Allow**. Releases are signed with the same
+certificate, so it doesn't ask again after updates.
 
 ## What it does
 
@@ -51,6 +58,8 @@ Version 1, in the **Original** mode. Zen, Chaos and Ancient modes come later.
   1–8, or challenge a friend (Blitz works with both). Accept challenges from others,
   premove, offer draws, resign, abort, and claim victory if your opponent leaves. It
   reconnects if the connection drops.
+- **Watch live:** the game on Lichess TV, with both players' titles, ratings and clocks.
+  When it ends, the next one starts on its own. No login needed.
 - **Step through any game** with the arrow keys, or click a move.
 - **Sounds** for moves, captures, check, and the start and end of a game. They're made in
   code, so there's nothing to download.
@@ -65,7 +74,7 @@ Every action has a single key, shown on its button. Menu items also have ⌘ sho
 
 | Where | Keys |
 |---|---|
-| Anywhere | **F** flip · **S** sidebar · **T** light/dark · **M** sound · **R** random pieces and board · **L** log in · **N** new local game |
+| Anywhere | **F** flip · **S** sidebar · **T** light/dark · **M** sound · **R** random pieces and board · **L** log in · **N** new local game · **W** watch live (again to stop) |
 | Moves | **← →** step back and forward · **↑** start · **↓** back to live |
 | Lobby | **1–5** quick pairing · **6–0, -** play the computer · **[ ]** computer level · **C** colour · **U** challenge a friend |
 | Challenges | **Y** accept · **Esc** decline (or withdraw yours) |
@@ -151,6 +160,8 @@ quits.
 - [x] Claim victory when the opponent leaves
 - [x] Step back through the move list during and after a game
 - [x] 5+0 against the computer
+- [x] Watch live: Lichess TV, moving on to the next game by itself
+- [x] Material lead (+N) beside the player who is ahead
 
 **Modes** (the point of the project)
 - [ ] Theme system: every visual and sound from a theme pack, loaded from disk
@@ -162,8 +173,9 @@ quits.
 **Mac app**
 - [x] `.app` bundle with an icon, a DMG, and a Homebrew cask
 - [x] First release, with a CHANGELOG and release workflow
-- [ ] Signing and notarization (needs an Apple Developer account), so macOS opens it
-      normally and the Keychain doesn't ask again after updates
+- [x] Signed with a stable certificate, so the Keychain doesn't ask again after updates
+- [ ] Notarization (needs an Apple Developer account), so a downloaded DMG opens
+      without the first-launch step
 - [ ] Appearance: follow the system's light/dark setting
 - [ ] Check for updates
 
@@ -189,7 +201,7 @@ quits.
 - **[egui](https://github.com/emilk/egui)** and **[shakmaty](https://github.com/niklasf/shakmaty):**
   the UI toolkit and the chess rules underneath.
 - **[Cburnett's pieces](https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces):**
-  the built-in set, and the knight in the app icon.
+  the built-in set.
 
 ## Licence
 

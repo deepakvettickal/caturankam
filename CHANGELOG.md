@@ -20,6 +20,10 @@ All notable changes to Caturankam. The format follows
 
 - **Game ▸ New Local Game** (the sidebar's **N** still starts one), and **View ▸ Show Tab
   Bar**, which macOS added on its own.
+### Changed
+
+- **A new app icon:** a rook drawn as a pencil construction sketch on graph paper, with a
+  plain silhouette at the smallest sizes so it stays sharp in Finder and menus.
 
 ## [1.0.0] - 2026-10-14
 

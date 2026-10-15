@@ -1,14 +1,27 @@
-//! Renders `packaging/macos/icon.svg` to the 1024 px PNG the macOS bundle is
-//! built from. Run after editing the SVG, and commit both:
+//! Renders the app icon SVGs in `packaging/macos` to the PNGs the macOS bundle
+//! is built from. Run after editing an SVG, and commit both:
 //!
 //!     cargo run -p caturankam --example render_icon
+//!
+//! `icon.svg` is the full drawing; `icon-small.svg` is a plain silhouette for
+//! the 16 and 32 px sizes, where the drawing's fine lines turn to grey.
 
 fn main() {
+    render("icon.svg", "icon-1024.png", 1024);
+    render("icon-small.svg", "icon-small-64.png", 64);
+}
+
+fn render(svg: &str, png: &str, size: u32) {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packaging/macos");
-    let svg = std::fs::read(format!("{root}/icon.svg")).expect("read icon.svg");
-    let tree = resvg::usvg::Tree::from_data(&svg, &Default::default()).expect("parse icon.svg");
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(1024, 1024).expect("pixmap");
-    resvg::render(&tree, Default::default(), &mut pixmap.as_mut());
+    let data = std::fs::read(format!("{root}/{svg}")).expect("read svg");
+    let tree = resvg::usvg::Tree::from_data(&data, &Default::default()).expect("parse svg");
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).expect("pixmap");
+    let scale = size as f32 / tree.size().width();
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
     // tiny-skia stores premultiplied alpha; PNG wants straight alpha.
     let rgba: Vec<u8> = pixmap
         .pixels()
@@ -18,7 +31,7 @@ fn main() {
             [c.red(), c.green(), c.blue(), c.alpha()]
         })
         .collect();
-    let out = format!("{root}/icon-1024.png");
-    image::save_buffer(&out, &rgba, 1024, 1024, image::ColorType::Rgba8).expect("write png");
+    let out = format!("{root}/{png}");
+    image::save_buffer(&out, &rgba, size, size, image::ColorType::Rgba8).expect("write png");
     println!("wrote {out}");
 }

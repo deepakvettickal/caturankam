@@ -27,6 +27,11 @@ All notable changes to Caturankam. The format follows
   ⌘F flip. **View ▸ Dark Mode** replaces the Appearance submenu.
 - The local game says **Move a piece to begin** before the first move, in smaller type.
 
+### Fixed
+
+- The Dock shows Caturankam's icon, not egui's logo.
+- No loading circle flashes over the board when the pieces or board change (**R**).
+
 ### Removed
 
 - **Game ▸ New Local Game** (the sidebar's **N** still starts one), and **View ▸ Show Tab

@@ -26,6 +26,7 @@ security warning:
 
 ```sh
 brew tap deepakvettickal/caturankam https://github.com/deepakvettickal/caturankam
+brew trust --cask deepakvettickal/caturankam/caturankam
 brew install --cask caturankam
 ```
 

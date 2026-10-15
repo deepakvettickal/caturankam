@@ -2,7 +2,7 @@
 //! set by environment variables. Inert unless `CATURANKAM_DEMO` is set.
 //!
 //! - `CATURANKAM_DEMO=1`: default settings that are never saved; no saved login.
-//! - `CATURANKAM_DARK=1`: dark appearance.
+//! - `CATURANKAM_DARK=1`: dark appearance. `CATURANKAM_GLASS=1`: Glass.
 //! - `CATURANKAM_MOVES="e2e4 e7e5"`: moves to play on the local board.
 //! - `CATURANKAM_USER=name`: show the logged-in lobby as `name`, offline (nothing is
 //!   sent anywhere; for screenshots only).
@@ -20,6 +20,7 @@ const SETTLE_FRAMES: u32 = 10;
 
 pub struct Demo {
     pub dark: bool,
+    pub glass: bool,
     pub moves: String,
     pub user: Option<String>,
     pub watch: bool,
@@ -36,6 +37,7 @@ impl Demo {
         var("CATURANKAM_DEMO")?;
         Some(Self {
             dark: var("CATURANKAM_DARK").is_some(),
+            glass: var("CATURANKAM_GLASS").is_some(),
             moves: var("CATURANKAM_MOVES").unwrap_or_default(),
             user: var("CATURANKAM_USER"),
             watch: var("CATURANKAM_WATCH").is_some(),

@@ -22,14 +22,23 @@ pub struct Pal {
     pub on_primary: Color32,
     pub accent: Color32,
     pub dark: bool,
+    /// The sidebar's and board field's fill: `bg`, or see-through `bg` in Glass.
+    pub pane: Color32,
 }
 
 impl Pal {
     /// Dark mode uses the theme's `[ui_dark]`, if it has one.
-    pub fn new(theme: &Theme, dark: bool) -> Self {
+    pub fn new(theme: &Theme, dark: bool, glass: bool) -> Self {
         let dark_ui = theme.ui_dark.as_ref().filter(|_| dark);
         let u = dark_ui.unwrap_or(&theme.ui);
+        // Enough tint over the blur that text reads on any wallpaper.
+        let pane = if glass {
+            rgb(u.background).gamma_multiply(GLASS_TINT)
+        } else {
+            rgb(u.background)
+        };
         Self {
+            pane,
             dark: dark_ui.is_some(),
             on_primary: ink_on(rgb(u.primary)),
             bg: rgb(u.background),
@@ -42,6 +51,9 @@ impl Pal {
         }
     }
 }
+
+/// How much of the panel colour Glass keeps over the blur.
+const GLASS_TINT: f32 = 0.6;
 
 pub fn rgb(c: Rgb) -> Color32 {
     let [r, g, b] = c.0;

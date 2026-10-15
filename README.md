@@ -66,6 +66,8 @@ Version 1, in the **Original** mode. Zen, Chaos and Ancient modes come later.
 - **Every Lichess piece set and board** (41 and 25), downloaded only when you pick one.
 - **A Mac app:** native menu bar, light and dark appearance, a collapsible sidebar, and a
   shortcut for every action.
+- **Glass** (View ▸ Glass, ⌘G): frosted, see-through panels over your desktop, in light or
+  dark. The board stays solid.
 - **A local board** to play both sides offline.
 
 ## Keyboard

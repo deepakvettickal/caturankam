@@ -15,6 +15,8 @@ pub struct Settings {
     pub board: Option<String>,
     pub sidebar_hidden: bool,
     pub dark: bool,
+    /// Glass: frosted, see-through panels (macOS).
+    pub glass: bool,
     pub muted: bool,
     /// Never written to disk (demo mode for screenshots and benchmarks).
     #[serde(skip)]
@@ -57,6 +59,7 @@ mod tests {
             board: None,
             sidebar_hidden: true,
             dark: true,
+            glass: true,
             muted: false,
             ephemeral: false,
         };

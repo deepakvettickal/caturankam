@@ -30,5 +30,9 @@ memmap2.workspace = true  # map SF Pro instead of copying 8 MB into RAM
 objc2 = { version = "0.6", features = ["exception"] }
 # Already in the tree via winit/muda; NSSound plays the synthesised sounds
 # without keeping an audio stream open.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSSound"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
+# NSVisualEffectView and friends: the Glass appearance (glass.rs).
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std", "NSSound", "NSApplication", "NSResponder", "NSView", "NSWindow",
+  "NSVisualEffectView", "objc2-core-foundation",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSArray", "NSGeometry"] }

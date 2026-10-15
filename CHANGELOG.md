@@ -8,6 +8,12 @@ All notable changes to Caturankam. The format follows
 
 ### Added
 
+- **Glass** (View ▸ Glass, ⌘G): the sidebar, the field around the board and the title
+  bar turn frosted and see-through, in light or dark, tinted so text stays readable.
+  The board stays solid. The blur is done by macOS, so it costs no CPU.
+
+### Added
+
 - **Watch live:** follow the game on Lichess TV from the sidebar (**W**), with the
   players' titles, ratings and clocks. When it ends, the next one starts on its own.
   No login needed, and nothing connects until you press it.

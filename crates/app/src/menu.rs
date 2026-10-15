@@ -12,6 +12,8 @@ use std::sync::mpsc;
 // Sound has none: ⌘M is the system's Minimize.
 const SIDEBAR_KEY: &str = "CmdOrCtrl+S";
 const DARK_KEY: &str = "CmdOrCtrl+T";
+/// Menu-only (no sidebar chip): ⌘G for Glass.
+const GLASS_KEY: &str = "CmdOrCtrl+G";
 
 /// What the menu currently shows; re-synced only when it changes.
 #[derive(Clone, PartialEq, Default)]
@@ -22,6 +24,7 @@ pub struct MenuState {
     pub board: Option<String>,
     pub sidebar_hidden: bool,
     pub dark: bool,
+    pub glass: bool,
     pub muted: bool,
 }
 
@@ -31,6 +34,7 @@ pub struct MenuBar {
     logout: MenuItem,
     sidebar: MenuItem,
     dark: CheckMenuItem,
+    glass: CheckMenuItem,
     sound: CheckMenuItem,
     pieces: Vec<CheckMenuItem>,
     boards: Vec<CheckMenuItem>,
@@ -97,12 +101,14 @@ impl MenuBar {
                 .collect();
         let sidebar = item("sidebar", "Hide Sidebar", Some(SIDEBAR_KEY));
         let dark = CheckMenuItem::with_id("dark", "Dark Mode", true, false, key(DARK_KEY));
+        let glass = CheckMenuItem::with_id("glass", "Glass", true, false, key(GLASS_KEY));
         let sound = CheckMenuItem::with_id("sound", "Sound", true, true, None);
         let view = submenu(
             "View",
             &[
                 &sidebar,
                 &dark,
+                &glass,
                 &sound,
                 &PredefinedMenuItem::separator(),
                 &submenu("Pieces", &pieces.iter().map(|i| i as _).collect::<Vec<_>>()),
@@ -154,6 +160,7 @@ impl MenuBar {
             logout,
             sidebar,
             dark,
+            glass,
             sound,
             pieces,
             boards,
@@ -179,6 +186,7 @@ impl MenuBar {
             "Hide Sidebar"
         });
         self.dark.set_checked(state.dark);
+        self.glass.set_checked(state.glass);
         self.sound.set_checked(!state.muted);
         let piece = format!("piece:{}", state.piece_set.as_deref().unwrap_or(""));
         for i in &self.pieces {
@@ -206,6 +214,7 @@ fn action(id: &str) -> Option<Action> {
         "random" => Action::Randomize,
         "sidebar" => Action::ToggleSidebar,
         "dark" => Action::ToggleDark,
+        "glass" => Action::ToggleGlass,
         "sound" => Action::ToggleSound,
         _ => {
             if let Some(set) = id.strip_prefix("piece:") {
@@ -237,5 +246,7 @@ mod tests {
         assert_eq!(action("dark"), Some(Action::ToggleDark));
         assert!(SIDEBAR_KEY.parse::<Accelerator>().is_ok());
         assert!(DARK_KEY.parse::<Accelerator>().is_ok());
+        assert!(GLASS_KEY.parse::<Accelerator>().is_ok());
+        assert_eq!(action("glass"), Some(Action::ToggleGlass));
     }
 }

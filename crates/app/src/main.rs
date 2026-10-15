@@ -2,6 +2,8 @@ mod assets;
 mod board;
 mod demo;
 #[cfg(target_os = "macos")]
+mod glass;
+#[cfg(target_os = "macos")]
 mod mac_crash_guard;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -58,6 +60,9 @@ fn main() -> eframe::Result {
         return Ok(());
     }
     let viewport = egui::ViewportBuilder::default()
+        // See-through, so Glass can show the blur behind it; every other
+        // appearance paints opaque panels over the whole window.
+        .with_transparent(true)
         .with_title("Caturankam")
         .with_inner_size([1040.0, 760.0])
         .with_min_inner_size([720.0, 480.0]);
@@ -88,6 +93,7 @@ pub enum Action {
     /// Light (`false`) or dark (`true`) chrome.
     Dark(bool),
     ToggleDark,
+    ToggleGlass,
     ToggleSound,
     /// Index into `SEEKS`.
     Seek(usize),
@@ -182,6 +188,8 @@ struct App {
     sidebar_hidden_at: Option<f64>,
     /// The window title last sent, so it's only updated when it changes.
     title: String,
+    /// Height of the title bar the content runs under in Glass; 0 otherwise.
+    titlebar: f32,
     /// The ply being looked at while stepping through history; `None` is live.
     viewing: Option<usize>,
     /// Challenges to us, oldest first.
@@ -201,6 +209,7 @@ impl App {
         let settings = match &demo {
             Some(d) => Settings {
                 dark: d.dark,
+                glass: d.glass,
                 piece_set: d.pieces.clone(),
                 board: d.board.clone(),
                 ephemeral: true,
@@ -208,7 +217,7 @@ impl App {
             },
             None => Settings::load(),
         };
-        let pal = Pal::new(&theme, settings.dark);
+        let pal = Pal::new(&theme, settings.dark, settings.glass);
         let mut app = Self {
             builtin: PieceSet::builtin(&theme),
             theme,
@@ -238,6 +247,7 @@ impl App {
             demo,
             sidebar_hidden_at: None,
             title: String::new(),
+            titlebar: 0.0,
             viewing: None,
             incoming: Vec::new(),
             sound: sound::Player::default(),
@@ -255,6 +265,10 @@ impl App {
         }
         app.apply_appearance(ctx);
         app.apply_mode(ctx);
+        #[cfg(target_os = "macos")]
+        if app.settings.glass {
+            app.titlebar = glass::set(true);
+        }
         if let Some(user) = app.settings.username.clone() {
             app.account = Account::Connecting(user);
             app.net(ctx).send(Cmd::Connect);
@@ -282,7 +296,7 @@ impl App {
 
     /// Light or dark: egui's widgets, our palette, and the native window chrome.
     fn apply_mode(&mut self, ctx: &egui::Context) {
-        self.pal = Pal::new(&self.theme, self.settings.dark);
+        self.pal = Pal::new(&self.theme, self.settings.dark, self.settings.glass);
         style::apply(ctx, &self.pal);
         let native = if self.pal.dark {
             egui::SystemTheme::Dark
@@ -691,6 +705,13 @@ impl App {
                 self.apply_mode(ctx);
             }
             Action::ToggleDark => self.act(ctx, Action::Dark(!self.settings.dark)),
+            #[cfg(target_os = "macos")]
+            Action::ToggleGlass => {
+                self.settings.glass = !self.settings.glass;
+                self.settings.save();
+                self.titlebar = glass::set(self.settings.glass);
+                self.apply_mode(ctx);
+            }
             Action::ToggleSound => {
                 self.settings.muted = !self.settings.muted;
                 self.settings.save();
@@ -964,9 +985,14 @@ impl App {
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         let pal = self.pal;
         let frame = egui::Frame::new()
-            .fill(pal.bg)
+            .fill(pal.pane)
             .stroke(Stroke::new(1.0, pal.line))
-            .inner_margin(Margin::symmetric(18, 16));
+            .inner_margin(Margin {
+                left: 18,
+                right: 18,
+                top: 16 + self.titlebar as i8,
+                bottom: 16,
+            });
         egui::Panel::right("side")
             .frame(frame)
             .exact_size(300.0)
@@ -1416,8 +1442,10 @@ impl App {
         self.show_sidebar_hint(ui);
         self.incoming_card(ui);
 
-        // Just enough room for the frame and its crop-mark overshoot.
-        let area = field.shrink(FRAME + style::CROP + 2.0);
+        // Just enough room for the frame and its crop-mark overshoot, below
+        // the title bar when the content runs under it (Glass).
+        let mut area = field.shrink(FRAME + style::CROP + 2.0);
+        area.min.y += self.titlebar;
         let card = board::board_rect(area).expand(FRAME);
         ui.painter().rect_filled(card, 0.0, pal.bg);
         style::crop_frame(ui.painter(), card, pal.line.gamma_multiply(1.6).to_opaque());
@@ -1709,6 +1737,11 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Nothing under the panels: they paint their own fill, see-through only in Glass.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let now = ui.input(|i| i.time);
@@ -1725,6 +1758,7 @@ impl eframe::App for App {
                 board: self.settings.board.clone(),
                 sidebar_hidden: !self.sidebar_visible(),
                 dark: self.settings.dark,
+                glass: self.settings.glass,
                 muted: self.settings.muted,
             });
         }
@@ -1735,7 +1769,7 @@ impl eframe::App for App {
         if self.sidebar_visible() {
             self.side_panel(ui);
         }
-        let frame = egui::Frame::new().fill(self.pal.bg);
+        let frame = egui::Frame::new().fill(self.pal.pane);
         egui::CentralPanel::default()
             .frame(frame)
             .show(ui, |ui| self.board_area(ui, now));

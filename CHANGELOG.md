@@ -6,6 +6,12 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Installing is smoother.** Homebrew installs open without the macOS security prompt,
+  and the README gives a one-line command for the DMG. Releases are signed with a stable
+  certificate, so the Keychain no longer asks again after each update.
+
 ## [1.0.0] - 2026-10-14
 
 The first release: a native Mac chess client for Lichess, in the **Original** mode.

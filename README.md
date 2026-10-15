@@ -25,16 +25,20 @@ brew tap deepakvettickal/caturankam https://github.com/deepakvettickal/caturanka
 brew install --cask caturankam
 ```
 
-**First launch.** Releases aren't notarized by Apple yet, so macOS blocks the app the
-first time:
+**First launch.** Releases aren't notarized by Apple, so macOS blocks a downloaded
+app the first time. Homebrew installs skip this, and so do builds from source. For the
+DMG, run this once after dragging the app to Applications:
 
-1. Open Caturankam, and choose **Done** when macOS says it can't be verified.
-2. Open **System Settings ▸ Privacy & Security**, scroll down, and click **Open Anyway**
-   next to Caturankam. Confirm with **Open Anyway** and your password.
+```sh
+xattr -dr com.apple.quarantine /Applications/Caturankam.app
+```
 
-You only do this once. macOS may also ask to let Caturankam use your Keychain, where
-your Lichess login is stored; choose **Always Allow**. It asks again after each update,
-until releases are signed.
+Or open Caturankam, choose **Done** when macOS says it can't be verified, then click
+**Open Anyway** next to Caturankam in **System Settings ▸ Privacy & Security**.
+
+macOS may also ask to let Caturankam use your Keychain, where your Lichess login is
+stored; choose **Always Allow**. Releases are signed with the same certificate, so it
+doesn't ask again after updates.
 
 ## What it does
 
@@ -157,8 +161,9 @@ quits.
 **Mac app**
 - [x] `.app` bundle with an icon, a DMG, and a Homebrew cask
 - [x] First release, with a CHANGELOG and release workflow
-- [ ] Signing and notarization (needs an Apple Developer account), so macOS opens it
-      normally and the Keychain doesn't ask again after updates
+- [x] Signed with a stable certificate, so the Keychain doesn't ask again after updates
+- [ ] Notarization (needs an Apple Developer account), so a downloaded DMG opens
+      without the first-launch step
 - [ ] Appearance: follow the system's light/dark setting
 - [ ] Check for updates
 

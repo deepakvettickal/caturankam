@@ -3,8 +3,9 @@
 #
 #   packaging/macos/bundle.sh <binary> <output.app> <version>
 #
-# Set CODESIGN_IDENTITY to sign with a Developer ID (hardened runtime, ready
-# for notarization). Without it the app is ad-hoc signed: Apple Silicon won't
+# Set CODESIGN_IDENTITY to sign with a certificate (hardened runtime): a
+# Developer ID, ready for notarization, or a self-signed one, which gives the
+# app a stable identity across updates. Without it the app is ad-hoc signed: Apple Silicon won't
 # launch a completely unsigned app.
 #
 # Structure after spotifast's packaging/macos/bundle.sh (MIT).

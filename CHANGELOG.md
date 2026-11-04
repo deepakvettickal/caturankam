@@ -6,14 +6,6 @@ All notable changes to Caturankam. The format follows
 
 ## [Unreleased]
 
-## [1.1.1] - 2026-11-02
-
-### Changed
-
-- **Hiding the sidebar shrinks the window** by the sidebar's width, and showing it grows
-  the window back, so the board keeps its size and doesn't jump. Left alone in full
-  screen or when maximized.
-
 ## [1.1.0] - 2026-10-15
 
 ### Added
@@ -76,7 +68,6 @@ The first release: a native Mac chess client for Lichess, in the **Original** mo
 - The app no longer quits unexpectedly when its window is closed on Macs with a
   Touch Bar (an AppKit bug).
 
-[Unreleased]: https://github.com/deepakvettickal/caturankam/compare/v1.1.1...HEAD
-[1.1.1]: https://github.com/deepakvettickal/caturankam/compare/v1.1.0...v1.1.1
+[Unreleased]: https://github.com/deepakvettickal/caturankam/compare/v1.1.0...HEAD
 [1.1.0]: https://github.com/deepakvettickal/caturankam/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/deepakvettickal/caturankam/releases/tag/v1.0.0

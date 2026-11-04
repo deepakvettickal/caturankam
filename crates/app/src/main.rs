@@ -196,11 +196,6 @@ struct App {
     demo: Option<demo::Demo>,
     /// When the sidebar was last hidden, for the fading "Show sidebar" hint.
     sidebar_hidden_at: Option<f64>,
-    /// Whether the sidebar was shown last frame (None before the first frame),
-    /// so the window can grow or shrink by its width when that changes.
-    sidebar_shown: Option<bool>,
-    /// A window resize for the sidebar that hasn't landed yet.
-    fit: Option<Fit>,
     /// The window title last sent, so it's only updated when it changes.
     title: String,
     /// The ply being looked at while stepping through history; `None` is live.
@@ -258,8 +253,6 @@ impl App {
             draw_offered: false,
             demo,
             sidebar_hidden_at: None,
-            sidebar_shown: None,
-            fit: None,
             title: String::new(),
             viewing: None,
             incoming: Vec::new(),
@@ -992,7 +985,7 @@ impl App {
             .inner_margin(Margin::symmetric(18, 16));
         egui::Panel::right("side")
             .frame(frame)
-            .exact_size(SIDEBAR_WIDTH)
+            .exact_size(300.0)
             .resizable(false)
             .show_separator_line(false)
             .show(ui, |ui| {
@@ -1731,52 +1724,6 @@ impl App {
     }
 }
 
-const SIDEBAR_WIDTH: f32 = 300.0;
-
-/// While the window resizes for the sidebar, the board's width is held fixed,
-/// so it never jumps. Fast repeated toggles just retarget from the same width.
-#[derive(Clone, Copy)]
-struct Fit {
-    board_w: f32,
-    target_w: f32,
-    /// Give up waiting after this (min size, screen edge, OS refused).
-    until: f64,
-}
-
-/// Asks for a window `board_w` wide plus the sidebar if `shown`, keeping the
-/// height. None when full screen or maximized: the window is left alone then.
-fn fit_window(ctx: &egui::Context, board_w: f32, shown: bool, now: f64) -> Option<Fit> {
-    let (inner, outer, monitor, full, max) = ctx.input(|i| {
-        let v = i.viewport();
-        (
-            v.inner_rect,
-            v.outer_rect,
-            v.monitor_size,
-            v.fullscreen,
-            v.maximized,
-        )
-    });
-    if full == Some(true) || max == Some(true) {
-        return None;
-    }
-    let inner = inner?;
-    let mut target_w = board_w + if shown { SIDEBAR_WIDTH } else { 0.0 };
-    // Don't grow past the screen's right edge.
-    if let (Some(outer), Some(monitor)) = (outer, monitor) {
-        let chrome = outer.width() - inner.width();
-        target_w = target_w.min(monitor.x - outer.min.x - chrome);
-    }
-    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-        target_w,
-        inner.height(),
-    )));
-    Some(Fit {
-        board_w,
-        target_w,
-        until: now + 0.5,
-    })
-}
-
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -1801,42 +1748,8 @@ impl eframe::App for App {
 
         #[cfg(not(target_os = "macos"))]
         self.top_bar(ui);
-        let shown = self.sidebar_visible();
-        let win_w = ui.max_rect().width();
-        if let Some(was) = self.sidebar_shown.filter(|&was| was != shown) {
-            // Mid-resize, keep the width already being held.
-            let board_w = self.fit.map_or_else(
-                || win_w - if was { SIDEBAR_WIDTH } else { 0.0 },
-                |f| f.board_w,
-            );
-            self.fit = fit_window(&ctx, board_w, shown, now);
-        }
-        self.sidebar_shown = Some(shown);
-        if let Some(f) = self.fit {
-            if (win_w - f.target_w).abs() < 1.0 || now > f.until {
-                self.fit = None;
-            } else {
-                ctx.request_repaint();
-            }
-        }
-        match self.fit {
-            // Window not there yet: fill the gap so the board stays put, and
-            // show the sidebar once there's room for it.
-            Some(f) => {
-                let gap = win_w - f.board_w;
-                if shown && gap >= SIDEBAR_WIDTH - 0.5 {
-                    self.side_panel(ui);
-                } else if gap > 0.0 {
-                    egui::Panel::right("side_gap")
-                        .frame(egui::Frame::new().fill(self.pal.bg))
-                        .exact_size(gap)
-                        .resizable(false)
-                        .show_separator_line(false)
-                        .show(ui, |_| {});
-                }
-            }
-            None if shown => self.side_panel(ui),
-            None => {}
+        if self.sidebar_visible() {
+            self.side_panel(ui);
         }
         let frame = egui::Frame::new().fill(self.pal.bg);
         egui::CentralPanel::default()

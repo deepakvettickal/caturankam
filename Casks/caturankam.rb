@@ -3,8 +3,8 @@
 #   brew install --cask caturankam
 # Update `version` and `sha256` (from the release's checksums.txt) after each release.
 cask "caturankam" do
-  version "1.1.1"
-  sha256 "07970d67e9c76586dd1c769945456f9b4d904619774ad166ff3a1335d38b70cf"
+  version "1.1.0"
+  sha256 "4b5b86ba9ad14258f93f504a7ce2b8d8e59c01af7dad8912a38981106a1e66dd"
 
   url "https://github.com/deepakvettickal/caturankam/releases/download/v#{version}/Caturankam-#{version}.dmg"
   name "Caturankam"
